@@ -1,0 +1,5 @@
+{
+  "framework": null,
+  "buildCommand": "echo 'public/index.html is prebuilt by src/build.py'",
+  "outputDirectory": "public"
+}

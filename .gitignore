@@ -1,0 +1,4 @@
+node_modules/
+bin/
+src/_entry.js
+.DS_Store

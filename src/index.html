@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tidebreak</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Saira+Condensed:wght@500;700;800&display=swap">
+<style>
+/* Layout: full-bleed 3D canvas; HUD pinned to screen corners; menus are a left-hand dossier over the live map. */
+:root{
+  --bg:#07090c; --ink:#ece6da; --dim:rgba(236,230,218,.58); --faint:rgba(236,230,218,.16);
+  --amber:#ffb547; --hostile:#ff5b45; --panel:rgba(9,11,15,.62);
+  --display:'Saira Condensed','Arial Narrow','Helvetica Neue',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--ink);font:14px/1.45 var(--mono)}
+canvas#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.label{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+
+/* ---------- Menus ---------- */
+.overlay{position:fixed;inset:0;display:flex;align-items:stretch;z-index:20;
+  background:linear-gradient(90deg,rgba(7,9,12,.94) 0,rgba(7,9,12,.82) 34%,rgba(7,9,12,.15) 62%,rgba(7,9,12,0) 100%)}
+.dossier{width:min(560px,100%);overflow:auto;padding-block:clamp(24px,6vh,64px);
+  padding-left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));padding-right:max(20px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:22px}
+.eyebrow{display:flex;gap:14px;flex-wrap:wrap}
+.eyebrow span{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--amber)}
+.eyebrow span+span{color:var(--dim)}
+h1{font:800 clamp(56px,8.5vw,112px)/.82 var(--display);letter-spacing:-.01em;margin:0;text-transform:uppercase;text-wrap:balance}
+h1 em{font-style:normal;color:var(--amber)}
+.lede{max-width:46ch;color:var(--dim);margin:0}
+.lede b{color:var(--ink);font-weight:500}
+.field{display:grid;gap:8px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+input[type=text]{background:rgba(255,255,255,.05);border:1px solid var(--faint);color:var(--ink);font:500 18px/1 var(--mono);
+  padding:12px 14px;border-radius:2px;width:min(320px,100%)}
+input[type=range]{accent-color:var(--amber);width:200px}
+.seg{display:inline-flex;border:1px solid var(--faint);border-radius:2px;overflow:hidden}
+.seg button{background:none;border:0;padding:8px 14px;color:var(--dim);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.seg button[aria-pressed=true]{background:var(--ink);color:#0b0d10}
+.deploy{background:var(--amber);color:#16110a;border:0;border-radius:2px;padding:16px 34px;
+  font:800 26px/1 var(--display);letter-spacing:.06em;text-transform:uppercase}
+.deploy:hover{filter:brightness(1.08)}
+.deploy:disabled{opacity:.5;cursor:wait}
+.status{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:8px}
+.status i{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
+.status.ok i{background:#6be38a;box-shadow:0 0 8px #6be38a}
+.status.warn i{background:var(--amber)}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:12px;max-width:440px}
+.keys kbd{font:500 11px/1 var(--mono);color:var(--ink);border:1px solid var(--faint);border-bottom-width:2px;border-radius:3px;padding:4px 6px;white-space:nowrap;justify-self:start}
+.keys span{color:var(--dim);align-self:center}
+.joinbox{display:grid;gap:8px;border:1px solid var(--faint);padding:14px 16px;border-radius:2px;max-width:520px}
+.joinbox .row{gap:10px}
+.joinbox input[type=text]{font-size:16px;width:min(300px,100%);text-transform:lowercase}
+.btn2{background:none;border:1px solid var(--amber);color:var(--amber);border-radius:2px;padding:11px 18px;font:700 15px/1 var(--display);letter-spacing:.08em;text-transform:uppercase}
+.btn2:hover{background:rgba(255,255,255,.04)}
+.btn2:disabled{opacity:.5;cursor:wait}
+#joinmsg{font-size:12px;color:var(--dim);min-height:1em}
+#joinmsg.err,#webmsg.err{color:#ff8a7a}
+#webmsg{font-size:12px;color:var(--dim);min-height:1em;line-height:1.6}
+.code{font:600 20px/1.2 var(--mono);color:var(--amber);user-select:all;word-break:break-all;letter-spacing:.02em}
+.note{font-size:12px;color:var(--dim);border-left:2px solid var(--amber);padding:4px 0 4px 12px;max-width:52ch}
+
+/* ---------- HUD ---------- */
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10;font-family:var(--mono)}
+#cross{position:absolute;left:50%;top:50%;width:0;height:0}
+#cross i{position:absolute;background:var(--ink);box-shadow:0 0 2px rgba(0,0,0,.9)}
+#cross .h{height:2px;width:9px;top:-1px}
+#cross .v{width:2px;height:9px;left:-1px}
+#cross .dot{width:2px;height:2px;left:-1px;top:-1px}
+#hit{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;opacity:0}
+#hit i{position:absolute;left:14px;top:-1px;width:2px;height:10px;background:#fff;transform-origin:1px 16px}
+#hit.kill i{background:var(--hostile)}
+#scope{position:absolute;inset:0;opacity:0;background:
+  radial-gradient(circle at 50% 50%,transparent 0,transparent 38vmin,#000 38.3vmin)}
+#scope::before,#scope::after{content:"";position:absolute;left:50%;top:50%;background:#000}
+#scope::before{width:76vmin;height:1px;margin-left:-38vmin}
+#scope::after{height:76vmin;width:1px;margin-top:-38vmin}
+#scope b{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#ff3b2f;box-shadow:0 0 6px #ff3b2f}
+.corner{position:absolute;display:grid;gap:4px}
+#vitals{left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));bottom:max(26px,calc(env(safe-area-inset-bottom,0px) + 12px))}
+#hpnum{font:800 54px/.9 var(--display);font-variant-numeric:tabular-nums}
+#hpbar{width:200px;height:4px;background:var(--faint)}
+#hpbar b{display:block;height:100%;background:var(--ink);transition:width .15s}
+#hpbar.low b{background:var(--hostile)}
+#arms{right:max(28px,calc(env(safe-area-inset-right,0px) + 16px));bottom:max(26px,calc(env(safe-area-inset-bottom,0px) + 12px));text-align:right;justify-items:end}
+#ammo{font:800 54px/.9 var(--display);font-variant-numeric:tabular-nums}
+#ammo small{font-size:26px;color:var(--dim);font-weight:500}
+#wname{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+#slots{display:flex;gap:6px}
+#slots span{font-size:10px;letter-spacing:.1em;border:1px solid var(--faint);padding:3px 6px;color:var(--dim)}
+#slots span.on{border-color:var(--ink);color:var(--ink)}
+#score{position:absolute;top:max(18px,calc(env(safe-area-inset-top,0px) + 10px));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:16px;
+  background:var(--panel);padding:8px 16px;border-top:2px solid var(--amber)}
+#score .p{display:flex;align-items:baseline;gap:8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+#score .p b{font:800 30px/1 var(--display);font-variant-numeric:tabular-nums}
+#score .to{font-size:10px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;text-align:center}
+#feed{position:absolute;right:max(28px,calc(env(safe-area-inset-right,0px) + 16px));top:max(22px,calc(env(safe-area-inset-top,0px) + 12px));display:grid;gap:4px;justify-items:end}
+#feed div{background:var(--panel);padding:5px 10px;font-size:12px;animation:feed 5s forwards}
+@keyframes feed{0%,85%{opacity:1}100%{opacity:0}}
+#banner{position:absolute;left:50%;top:30%;transform:translateX(-50%);text-align:center;display:grid;gap:6px}
+#banner b{font:800 44px/1 var(--display);text-transform:uppercase;letter-spacing:.04em}
+#banner span{color:var(--dim);font-size:13px}
+#prompt{position:absolute;left:50%;top:62%;transform:translateX(-50%);font-size:12px;letter-spacing:.1em;text-transform:uppercase;background:var(--panel);padding:6px 12px}
+#dmg{position:absolute;left:50%;top:50%}
+#dmg i{position:absolute;width:160px;height:160px;left:-80px;top:-80px;border-radius:50%;
+  border:6px solid transparent;border-top-color:rgba(255,70,50,.85);filter:blur(1px);animation:dmg 1.2s forwards}
+@keyframes dmg{0%{opacity:1}100%{opacity:0}}
+#board{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(9,11,15,.86);padding:22px 26px;min-width:min(440px,92vw);border-top:2px solid var(--amber)}
+#board h2{font:800 30px/1 var(--display);margin:0 0 14px;text-transform:uppercase;letter-spacing:.03em}
+#board table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+#board th{font:500 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);text-align:right;padding:6px 8px;border-bottom:1px solid var(--faint)}
+#board th:first-child,#board td:first-child{text-align:left}
+#board td{padding:8px;text-align:right;font-size:14px}
+#board td i{display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:1px}
+#board p{margin:14px 0 0;color:var(--dim);font-size:12px}
+#net{position:absolute;left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));top:max(22px,calc(env(safe-area-inset-top,0px) + 12px));font-size:11px;color:var(--dim);letter-spacing:.06em}
+#err{position:fixed;inset:auto 16px 16px;z-index:50;background:#2a0f0c;border:1px solid var(--hostile);padding:12px 14px;font-size:12px}
+@media (max-width:640px){ .overlay{background:rgba(7,9,12,.9)} #hpnum,#ammo{font-size:40px} }
+@media (prefers-reduced-motion:reduce){ #feed div,#dmg i{animation-duration:.01s} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" hidden>
+  <div id="cross"><i class="h" style="left:-15px"></i><i class="h" style="left:6px"></i><i class="v" style="top:-15px"></i><i class="v" style="top:6px"></i><i class="dot"></i></div>
+  <div id="hit"><i style="transform:rotate(45deg)"></i><i style="transform:rotate(135deg)"></i><i style="transform:rotate(225deg)"></i><i style="transform:rotate(315deg)"></i></div>
+  <div id="scope"><b></b></div>
+  <div id="dmg"></div>
+  <div id="net"></div>
+  <div id="score"></div>
+  <div id="feed"></div>
+  <div id="banner" hidden><b id="bannerT"></b><span id="bannerS"></span></div>
+  <div id="prompt" hidden></div>
+  <div class="corner" id="vitals"><span class="label">Health</span><div id="hpnum">100</div><div id="hpbar"><b style="width:100%"></b></div></div>
+  <div class="corner" id="arms"><div id="slots"></div><div id="ammo">30<small> / 120</small></div><div id="wname">Carbine</div></div>
+  <div id="board" hidden></div>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="dossier">
+    <div class="eyebrow"><span>Hellenic Special Forces</span><span>Limani Kessa · Aegean · 1930 local</span></div>
+    <h1>Tide<em>break</em></h1>
+    <p class="lede" id="lede">Close-quarters deathmatch in a harbor compound on a Greek island at sunset. <b>First operator to <span id="tgt">10</span> kills wins.</b> Containers, a central warehouse and a raised catwalk give every lane a second route.</p>
+    <div class="field">
+      <label class="label" for="name">Callsign</label>
+      <input type="text" id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Your name">
+    </div>
+    <div class="row">
+      <div class="field"><label class="label" for="sens">Mouse sensitivity</label><input type="range" id="sens" min="0.3" max="2.5" step="0.05" value="1"></div>
+      <div class="field"><span class="label">Graphics</span><div class="seg" id="quality"><button type="button" data-q="auto" title="Adjusts resolution to stay smooth">Auto</button><button type="button" data-q="ultra">Ultra</button><button type="button" data-q="high">High</button><button type="button" data-q="fast">Fast</button></div></div>
+    </div>
+    <div class="row">
+      <button class="deploy" id="deploy" type="button" disabled>Loading…</button>
+      <div class="status" id="status"><i></i><span>Starting engine…</span></div>
+    </div>
+    <div class="joinbox" id="joinbox" hidden>
+      <label class="label" for="joincode">Join a match over the internet</label>
+      <div class="row">
+        <input type="text" id="joincode" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="join code, e.g. sunny-lake-river-boat">
+        <button class="btn2" id="joinbtn" type="button">Join</button>
+      </div>
+      <div id="joinmsg">Ask the host for the join code shown on their screen.</div>
+    </div>
+    <div class="joinbox" id="webbox" hidden>
+      <label class="label" for="webcode">Play online</label>
+      <div class="row">
+        <button class="btn2" id="hostbtn" type="button">Host a match</button>
+        <span style="opacity:.6">or</span>
+        <input type="text" id="webcode" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="8" placeholder="match code" style="text-transform:uppercase;width:140px">
+        <button class="btn2" id="webjoinbtn" type="button">Join</button>
+      </div>
+      <div id="webmsg">The host gets a short code to share. Both players need this page open.</div>
+    </div>
+    <p class="note" id="hostnote">Ammo crates in the warehouse and on the catwalk refill your magazines. Health recovers after five seconds out of fire.</p>
+    <div class="keys">
+      <kbd>W A S D</kbd><span>Move</span>
+      <kbd>Mouse</kbd><span>Aim · left click fires · right click aims down sights</span>
+      <kbd>Shift</kbd><span>Sprint</span>
+      <kbd>C</kbd><span>Crouch (toggle)</span>
+      <kbd>Space</kbd><span>Jump</span>
+      <kbd>R</kbd><span>Reload</span>
+      <kbd>1 2 3</kbd><span>Carbine · marksman rifle · sidearm (Q swaps back)</span>
+      <kbd>Tab</kbd><span>Scoreboard</span>
+      <kbd>Esc</kbd><span>Release the mouse and open this menu</span>
+    </div>
+  </div>
+</div>
+
+<div id="err" hidden></div>
+
+<script>
+  window.__bootTimer = setTimeout(function(){
+    if (window.__booted) return;
+    var e = document.getElementById('err'); e.hidden = false;
+    e.textContent = 'The game did not start. Use an up-to-date Chrome or Safari (Safari 16 or newer), then reload this page.';
+  }, 15000);
+</script>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+<script type="module" src="./game.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "leonapollogame1",
+  "version": "1.0.0",
+  "description": "Tidebreak: Greek-island special forces deathmatch in the browser",
+  "scripts": {
+    "build": "python3 src/build.py",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.24.0",
+    "peerjs": "^1.5.4"
+  },
+  "private": true
+}
