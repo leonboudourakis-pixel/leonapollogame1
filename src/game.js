@@ -34,7 +34,7 @@ if (!QUALITY[settings.quality]) settings.quality = 'auto';
 const SLOT_COLORS = [0xffb547, 0x5fd0ff, 0xa6e35a, 0xff6fb5];
 const SLOT_CSS = ['#ffb547', '#5fd0ff', '#a6e35a', '#ff6fb5'];
 const TEAM_COLORS = [0x2f7fe0, 0xe0452f], TEAM_CSS = ['#5aa2ff', '#ff6a52'];
-const MAP = { x0: -42, x1: 42, z0: -24, z1: 38 }; // compound bounds (84 x 62 m)
+const MAP = { x0: -42, x1: 70, z0: -66, z1: 38 }; // play bounds: compound (x -42..42) + dock yard (x 42..70) + pier and harbour water to z -66
 
 // ======================================================= RENDERER
 const canvas = $('c');
@@ -109,9 +109,9 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const hemi = new THREE.HemisphereLight(0x8094c8, 0x4a372c, 0.5);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffae73, 3.4);
-sun.position.copy(SUN_DIR).multiplyScalar(95).add(new V3(0, 0, 7)); sun.target.position.set(0, 0, 7);
+sun.position.copy(SUN_DIR).multiplyScalar(110).add(new V3(14, 0, -12)); sun.target.position.set(14, 0, -12);
 sun.castShadow = true;
-Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 10, far: 230 });
+Object.assign(sun.shadow.camera, { left: -64, right: 64, top: 64, bottom: -64, near: 10, far: 260 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun, sun.target);
 
@@ -435,19 +435,24 @@ function buildMap() {
   // Seawall + railing (north)
   addBox(0, -2.6, -24.6, 84, 2.6, 1.2, M.concrete, { s: 3, collide: false });
   addBox(0, -0.02, -24.6, 84.4, 0.32, 1.25, M.concreteDark, { s: 3, collide: false });
-  for (let x = -41.4; x <= 41.4; x += 2.07) place(cyl(0.04, 1.1, 8), M.rail, x, 0.85, -24.5);
-  for (const y of [0.75, 1.32]) place(new THREE.CylinderGeometry(0.035, 0.035, 83.5, 8).rotateZ(Math.PI / 2), M.rail, 0, y, -24.5);
-  addCollider(-42, -3, -25.2, 42, 0.3, -24.2); addCollider(-42, 0.3, -25.2, 42, 8, -24.2, true);
+  { const gaps = [-30, 12], runs = []; let cur = -41.8; for (const g of gaps) { runs.push([cur, g - 0.75]); cur = g + 0.75; } runs.push([cur, 42]);
+    for (const [a, b] of runs) {
+      for (let x = a + 0.05; x <= b; x += 2.07) place(cyl(0.04, 1.1, 8), M.rail, x, 0.85, -24.5);
+      place(cyl(0.04, 1.1, 8), M.rail, b - 0.05, 0.85, -24.5);
+      for (const y of [0.75, 1.32]) place(new THREE.CylinderGeometry(0.035, 0.035, b - a, 8).rotateZ(Math.PI / 2), M.rail, (a + b) / 2, y, -24.5);
+      addCollider(a, 0.3, -25.2, b, 8, -24.2, true);
+    }
+    addCollider(-42, 0, -25.2, 42, 0.3, -24.2); }
   // bollards
   for (const x of [-36, -22, -8, 8, 22, 36]) { place(new THREE.CylinderGeometry(0.22, 0.28, 0.6, 14), M.steel, x, 0.3, -23.6); addCollider(x - 0.28, 0, -23.9, x + 0.28, 0.6, -23.3); }
 
   // Perimeter walls (S, W, E)
   const PW = (x, z, w, d) => { addBox(x, 0, z, w, 3.6, d, M.whitewash, { s: 3, ch: 8 }); addBox(x, 3.6, z, w + 0.2, 0.18, d + 0.2, M.aegean, { collide: false }); addBox(x, 0, z, w + 0.06, 0.35, d + 0.06, M.stone, { collide: false }); };
-  PW(0, 38.3, 84.6, 0.6); PW(-42.3, 7, 0.6, 63.2); PW(42.3, 7, 0.6, 63.2);
+  PW(0, 38.3, 84.6, 0.6); PW(-42.3, 7, 0.6, 63.2); for (const [a, b] of [[-24.6, -20.5], [-15.5, 4.5], [9.5, 38.6]]) PW(42.3, (a + b) / 2, 0.6, b - a); // gates at z -18 and z 7
   for (let x = -39; x <= 39; x += 6) addBox(x, 0, 37.9, 0.5, 3.7, 0.3, M.whitewash, { collide: false });
-  for (let z = -18; z <= 34; z += 6) { addBox(-41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); addBox(41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); }
+  for (let z = -18; z <= 34; z += 6) { addBox(-41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); if (z !== -18 && z !== 6) addBox(41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); }
   // razor wire on walls
-  for (const [x, z, len, rz] of [[0, 38.3, 84, 1], [-42.3, 7, 62, 0], [42.3, 7, 62, 0]]) {
+  for (const [x, z, len, rz] of [[0, 38.3, 84, 1], [-42.3, 7, 62, 0], [42.3, -22.55, 3.9, 0], [42.3, -5.5, 19.8, 0], [42.3, 24.05, 28.9, 0]]) {
     const coil = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.008, 4, 10), M.steelLight);
     const n = Math.floor(len / 0.35); const inst = new THREE.InstancedMesh(coil.geometry, M.steelLight, n); const mm = new THREE.Matrix4(), q = new THREE.Quaternion();
     for (let i = 0; i < n; i++) { const o = -len / 2 + i * 0.35; const p = rz ? new V3(x + o, 4.0, z) : new V3(x, 4.0, z + o); q.setFromEuler(new THREE.Euler(0, rz ? 0 : Math.PI / 2, SR(-.2, .2))); mm.compose(p, q, new V3(1, 1, 1)); inst.setMatrixAt(i, mm); }
@@ -520,20 +525,14 @@ function buildMap() {
   floodlight(-40.5, -22.5, -26, -10); floodlight(40.5, -22.5, 26, -10); floodlight(-40.5, 36.5, -22, 26); floodlight(40.5, 36.5, 22, 26);
   expansion();
 
-  // ---- Harbour crane (outside east, scenery)
-  const cx = 58, cz = -30;
-  for (const [dx, dz] of [[-4, -5], [4, -5], [-4, 5], [4, 5]]) addBox(cx + dx, -2, cz + dz, 0.9, 24, 0.9, M.paint, { s: 4, collide: false });
-  addBox(cx, 20, cz, 10, 1.4, 12, M.paint, { s: 4, collide: false });
-  addBox(cx - 18, 22, cz, 52, 1.2, 1.6, M.paint, { s: 4, collide: false });
-  addBox(cx + 2, 21.4, cz, 4, 3, 4, M.paint, { s: 4, collide: false });
-  place(cyl(0.03, 14, 4), M.steel, cx - 26, 15, cz);
-  addBox(cx - 26, 6.5, cz, 2.4, 1.2, 6, containerMats[1], { s: 4.8, collide: false });
+  dockYard();
   noCastScope = true; village(); noCastScope = false;
   // flags: warehouse roof, seawall, painted wall flag
   wavingFlag(0, 6.37, 0, 9, 2.6, 1.7); wavingFlag(-38, 0, -23.4, 8, 2.2, 1.45); wavingFlag(38, 0, -23.4, 8, 2.2, 1.45);
   { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 3), new THREE.MeshStandardMaterial({ map: T.flag, roughness: 0.95, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2 })); m.position.set(-14, 2.3, 37.99); m.rotation.y = Math.PI; scene.add(m); }
 
   mergeStatic();
+  buildPort();
 }
 
 
@@ -715,18 +714,106 @@ function updateFlags(t) {
     f.m.rotation.y = -0.6 + Math.sin(t * 0.3 + f.ph) * 0.15; // wind from the sea
   }
 }
-function greekHouse(x, y, z, w, d, h, ry = 0) {
-  addBox(x, y, z, w, h, d, M.whitewash, { collide: false, s: 3 });
-  addBox(x, y + h, z, w + 0.15, 0.15, d + 0.15, M.whitewash, { collide: false, s: 3 });
-  const fz = z - d / 2 - 0.03; // north-facing front toward harbour
-  place(boxGeo(0.9, 2.0, 0.06, 1), M.aegean, x - w * 0.2, y + 1.0, fz, { cast: false });
-  place(boxGeo(0.8, 0.9, 0.06, 1), sr() < 0.5 ? M.aegean : M.winGlow, x + w * 0.22, y + h * 0.6, fz, { cast: false });
-  if (sr() < 0.35) addBox(x + w * 0.3, y + h + 0.15, z + d * 0.2, 0.9, 0.9, 0.9, M.whitewash, { collide: false, s: 3 });
-  if (sr() < 0.3) place(boxGeo(w * 0.5, 0.1, 1.2, 2), M.terracotta, x, y + h * 0.75, fz - 0.6, { cast: true });
+let VILM = null;
+function vmats() { // village palette, made once
+  return VILM || (VILM = {
+    wash: M.whitewash,
+    ochre: std({ map: T.whitewash, color: 0xf0d2a4, roughness: 0.9 }),
+    pink: std({ map: T.whitewash, color: 0xf2cfc0, roughness: 0.9 }),
+    trim: std({ map: T.whitewash, color: 0xfbfbf8, roughness: 0.8 }),
+    plinth: std({ map: T.whitewash, color: 0x9aa3a8, roughness: 0.9 }),
+    blue: blueDoorMat,
+    green: std({ color: 0x2f6b4a, roughness: 0.6 }),
+    red: std({ color: 0x8c2a22, roughness: 0.6 }),
+    recess: std({ color: 0x120e0b, roughness: 1 }),
+    bougain: std({ color: 0xc2287c, roughness: 0.9 }),
+    leaf: std({ color: 0x4d6a34, roughness: 0.95 }),
+    solar: std({ color: 0x1a2738, roughness: 0.15, metalness: 0.7 }),
+    tank: std({ color: 0xc9ccd0, roughness: 0.35, metalness: 0.8 }),
+    pot: std({ color: 0xa8542f, roughness: 0.85 }),
+    earth: std({ map: T.asphalt, color: 0x9b8462, roughness: 1 }),
+    brass: std({ color: 0xb8913c, roughness: 0.35, metalness: 0.9 })
+  });
+}
+// window with a white surround, dark recess, sill and open or closed shutters. Front faces -z (nz = -1) or a side (nx).
+function vWindow(x, y, z, nx, nz, w, h, shut, lit) {
+  const V = vmats(), side = nx !== 0, o = (dx, dz) => [x + dx * (side ? 0 : 1) + nx * dz, z + nz * dz + (side ? dx : 0)];
+  const bw = (a, b) => side ? [0.0001 + b, a] : [a, 0.0001 + b];
+  const box = (mat, wid, hh, dep, dx, dy, out) => { const [px, pz] = o(dx, out); const [ww, dd] = bw(wid, dep); place(boxGeo(ww, hh, dd, 1), mat, px, y + dy, pz, { cast: false }); };
+  box(V.trim, w + 0.24, h + 0.24, 0.06, 0, 0, 0.03);                 // surround
+  box(lit ? M.winGlow : V.recess, w, h, 0.07, 0, 0, 0.045);           // glass / dark room behind
+  box(V.trim, w + 0.36, 0.08, 0.2, 0, -h / 2 - 0.12, 0.1);            // sill
+  box(V.trim, 0.05, h, 0.09, 0, 0, 0.05);                             // mullion
+  if (shut === 'open') for (const s of [-1, 1]) box(shutMat, w / 2, h, 0.05, s * (w / 2 + 0.14 + w / 4), 0, 0.07);
+  else if (shut === 'closed') { box(shutMat, w, h, 0.06, 0, 0, 0.09); for (let i = 1; i < 6; i++) box(V.recess, w * 0.9, 0.018, 0.065, 0, -h / 2 + i * h / 6, 0.1); }
+}
+let shutMat = null;
+function greekHouse(x, y, z, w, d, h) { // a Cycladic house facing the harbour (-z), with roof clutter and plants
+  const V = vmats();
+  const wall = sr() < 0.8 ? V.wash : sr() < 0.5 ? V.ochre : V.pink;
+  const door = [V.blue, V.blue, V.blue, V.green, V.red][Math.floor(sr() * 5)];
+  shutMat = sr() < 0.75 ? V.blue : door;
+  const floors = h > 4.6 ? 2 : 1, fz = z - d / 2;
+  addBox(x, y, z, w, h, d, wall, { collide: false, s: 3 });
+  addBox(x, y, z, w + 0.06, 0.4, d + 0.06, V.plinth, { collide: false, s: 2 });
+  addBox(x, y + h, z, w + 0.1, 0.4, d + 0.1, wall, { collide: false, s: 3 });        // parapet
+  addBox(x, y + h + 0.4, z, w + 0.16, 0.06, d + 0.16, V.trim, { collide: false, s: 2 }); // rounded-off cap
+  // door: surround, recessed leaf, step, handle, little fanlight
+  const dx = x + SR(-w * 0.28, w * 0.05);
+  place(boxGeo(1.3, 2.45, 0.08, 1), V.trim, dx, y + 1.22, fz - 0.04, { cast: false });
+  place(boxGeo(0.98, 2.12, 0.05, 1), door, dx, y + 1.06, fz - 0.05, { cast: false });
+  for (const yy of [0.55, 1.55]) place(boxGeo(0.8, 0.04, 0.02, 1), V.recess, dx, y + yy, fz - 0.085, { cast: false });
+  place(new THREE.SphereGeometry(0.04, 6, 4), V.brass, dx + 0.36, y + 1.05, fz - 0.1, { cast: false });
+  place(boxGeo(0.9, 0.22, 0.04, 1), sr() < 0.5 ? M.winGlow : V.recess, dx, y + 2.28, fz - 0.06, { cast: false });
+  addBox(dx, y, fz - 0.32, 1.5, 0.16, 0.6, V.trim, { collide: false, s: 1 });
+  // windows: ground floor beside the door, a row upstairs
+  for (let f = 0; f < floors; f++) {
+    const wy = y + (f === 0 ? 1.5 : 1.5 + 2.9), n = Math.max(1, Math.floor((w - 0.6) / 2.1));
+    for (let i = 0; i < n; i++) {
+      const wx = x - w / 2 + (i + 0.5) * w / n;
+      if (f === 0 && Math.abs(wx - dx) < 1.5) continue;
+      vWindow(wx, wy, fz, 0, -1, SR(0.75, 0.95), SR(0.95, 1.15), sr() < 0.55 ? 'open' : sr() < 0.6 ? 'closed' : 'none', sr() < 0.25);
+    }
+  }
+  for (const s of [-1, 1]) if (sr() < 0.6) vWindow(x + s * w / 2, y + 1.5 + (floors - 1) * 2.9 * (sr() < 0.5 ? 1 : 0), z + SR(-d * 0.2, d * 0.2), s, 0, 0.7, 0.9, sr() < 0.6 ? 'open' : 'none', sr() < 0.2);
+  // balcony upstairs
+  if (floors === 2 && sr() < 0.5) {
+    const bx = x + SR(-w * 0.2, w * 0.2), bw = Math.min(2.6, w * 0.5);
+    addBox(bx, y + 2.85, fz - 0.55, bw, 0.14, 1.1, V.trim, { collide: false, s: 1 });
+    addBox(bx, y + 3.85, fz - 1.07, bw, 0.05, 0.05, shutMat, { collide: false });
+    for (let k = 0; k <= 6; k++) addBox(bx - bw / 2 + k * bw / 6, y + 2.99, fz - 1.07, 0.03, 0.86, 0.03, shutMat, { collide: false });
+  }
+  // upper cube set back, leaving a roof terrace with a blue rail
+  const top = y + h + 0.4;
+  if (floors === 1 && sr() < 0.5) {
+    const uw = w * SR(0.45, 0.6), ud = d * SR(0.45, 0.6), ux = x + (sr() < 0.5 ? -1 : 1) * (w - uw) / 2, uz = z + (d - ud) / 2, uh = SR(2.4, 2.8);
+    addBox(ux, y + h, uz, uw, uh, ud, wall, { collide: false, s: 3 });
+    addBox(ux, y + h + uh, uz, uw + 0.1, 0.35, ud + 0.1, wall, { collide: false, s: 3 });
+    addBox(ux, y + h + uh + 0.35, uz, uw + 0.16, 0.05, ud + 0.16, V.trim, { collide: false, s: 2 });
+    place(boxGeo(0.85, 1.9, 0.06, 1), door, ux + SR(-uw * 0.2, uw * 0.2), y + h + 0.95, uz - ud / 2 - 0.03, { cast: false });
+    for (let k = 0; k <= 10; k++) addBox(x - w / 2 + 0.15 + k * (w - 0.3) / 10, top, fz + 0.15, 0.04, 0.8, 0.04, V.blue, { collide: false });
+    addBox(x, top + 0.8, fz + 0.15, w - 0.3, 0.06, 0.06, V.blue, { collide: false });
+    if (sr() < 0.5) { for (const [px, pz] of [[x + w * 0.3, fz + 0.5], [x + w * 0.3, fz + 1.8]]) addBox(px, top, pz, 0.08, 2.0, 0.08, M.wood, { collide: false }); addBox(x + w * 0.3, top + 2.0, fz + 1.1, 1.8, 0.08, 1.8, M.wood, { collide: false }); for (let k = 0; k < 3; k++) place(new THREE.IcosahedronGeometry(SR(0.35, 0.6), 0), V.leaf, x + w * 0.3 + SR(-0.8, 0.8), top + 2.1, fz + 1.1 + SR(-0.8, 0.8), { cast: false }); }
+  }
+  // roof clutter: solar water heater, chimney, TV aerial, sometimes a small blue dome
+  const rx = x + SR(-w * 0.25, w * 0.25), rz = z + SR(0, d * 0.25);
+  if (sr() < 0.5) {
+    place(boxGeo(1.0, 0.05, 1.7, 1), V.solar, rx, top + 0.75, rz + 0.3, { rx: 0.65, cast: false });
+    place(new THREE.CylinderGeometry(0.28, 0.28, 1.4, 12).rotateZ(Math.PI / 2), V.tank, rx, top + 1.35, rz + 0.85, { cast: false });
+    for (const s of [-1, 1]) addBox(rx + s * 0.45, top, rz + 0.6, 0.04, 1.2, 0.04, M.steel, { collide: false });
+  }
+  if (sr() < 0.45) { const cx = x + (sr() < 0.5 ? -1 : 1) * (w / 2 - 0.5), cz = z + d * 0.3; addBox(cx, top, cz, 0.55, 1.1, 0.55, wall, { collide: false, s: 2 }); addBox(cx, top + 1.1, cz, 0.75, 0.1, 0.75, V.trim, { collide: false }); addBox(cx, top + 1.2, cz, 0.3, 0.25, 0.3, wall, { collide: false }); }
+  if (sr() < 0.3) { const ax = x + SR(-w * 0.3, w * 0.3); place(cyl(0.025, 2.4, 5), M.steelLight, ax, top + 1.2, z + d * 0.2, { cast: false }); for (let k = 0; k < 3; k++) place(boxGeo(0.9 - k * 0.2, 0.025, 0.025, 1), M.steelLight, ax, top + 1.7 + k * 0.25, z + d * 0.2, { cast: false }); }
+  if (sr() < 0.06) { place(cyl(1.0, 0.6, 20), wall, x, top + 0.3, z, { cast: false }); place(new THREE.SphereGeometry(1.05, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), V.blue, x, top + 0.58, z, { cast: false }); }
+  // bougainvillea over the door, pots by the step
+  if (sr() < 0.45) { const bx = dx + (sr() < 0.5 ? -1 : 1) * 0.9; for (let k = 0; k < 14; k++) place(new THREE.IcosahedronGeometry(SR(0.14, 0.28), 1), k % 3 ? V.bougain : V.leaf, bx + SR(-0.6, 0.6) * (1 - k / 20), y + SR(1.5, 3.1), fz - SR(0.05, 0.3), { cast: false }); place(cyl(0.05, 2.0, 5), M.bark, bx, y + 1.0, fz - 0.1, { cast: false }); }
+  if (sr() < 0.5) for (const s of [-1, 1]) { place(new THREE.CylinderGeometry(0.2, 0.14, 0.36, 10), V.pot, dx + s * 0.95, y + 0.18, fz - 0.35, { cast: false }); place(new THREE.IcosahedronGeometry(0.26, 0), V.leaf, dx + s * 0.95, y + 0.5, fz - 0.35, { cast: false }); }
+  // outside stair up the side wall to the roof
+  if (sr() < 0.25) { const sx = x + w / 2 + 0.5, n = Math.round(h / 0.3); for (let k = 0; k < n; k++) addBox(sx, y, fz + 0.3 + k * (d - 0.6) / n, 1.0, (k + 1) * h / n, (d - 0.6) / n + 0.01, wall, { collide: false, s: 2 }); }
 }
 function cypress(x, y, z, h = 9) {
   place(cyl(0.12, 1.2, 6), M.bark, x, y + 0.6, z);
-  const c = place(new THREE.ConeGeometry(0.9, h, 10), M.cypress, x, y + h / 2 + 0.8, z); c.scale.set(1, 1, 1);
+  place(new THREE.ConeGeometry(0.9, h, 10), M.cypress, x, y + h / 2 + 0.8, z);
   place(new THREE.SphereGeometry(0.9, 10, 8), M.cypress, x, y + 1.9, z);
 }
 function oliveTree(x, y, z) {
@@ -734,14 +821,26 @@ function oliveTree(x, y, z) {
   for (let i = 0; i < 5; i++) place(new THREE.IcosahedronGeometry(SR(0.9, 1.4), 1), M.oliveLeaf, x + SR(-1.2, 1.2), y + 2.4 + SR(0, 0.9), z + SR(-1.2, 1.2));
 }
 function village() {
-  // terraced hillside rising to the south, beyond the compound wall
+  const V = vmats();
+  // terraced hillside rising to the south: stone retaining walls, earth on top, whitewashed lanes and steps
   for (let row = 0; row < 6; row++) {
     const z = 46 + row * 9, y = row * 3.2;
-    addBox(0, -0.2, z + 4.5, 180, y + 0.2, 9, M.stone, { collide: false, s: 4 });
-    for (let x = -80; x < 80; x += SR(7, 12)) {
-      if (sr() < 0.2) { sr() < 0.5 ? cypress(x, y, z + SR(0, 4), SR(7, 11)) : oliveTree(x, y, z + SR(0, 4)); continue; }
-      greekHouse(x, y, z + SR(1.5, 3), SR(4, 7), SR(4, 6), SR(3, 5.5));
+    addBox(0, -0.2, z + 4.5, 190, y + 0.2, 9, V.earth, { collide: false, s: 6 });
+    if (row) { addBox(0, y - 3.2, z + 0.3, 190, 3.2, 0.6, M.stone, { collide: false, s: 3 }); addBox(0, y, z + 0.3, 190, 0.18, 0.75, V.trim, { collide: false, s: 2 }); }
+    addBox(0, y, z + 1.0, 190, 0.04, 1.6, M.concrete, { collide: false, s: 3 }); // lane along the terrace
+    for (const sx of [-52, -18, 14, 46]) if (row) { // steps up between rows
+      const sx2 = sx + row * 3; for (let k = 0; k < 10; k++) addBox(sx2, y - 3.2, z + 0.3 - (10 - k) * 0.3 + 0.15, 1.6, (k + 1) * 0.32, 0.3, M.concrete, { collide: false, s: 1 });
+      for (const s of [-1, 1]) addBox(sx2 + s * 0.88, y - 3.2, z - 1.2, 0.16, 3.4, 3.0, V.trim, { collide: false, s: 1 });
     }
+    const stepXs = row < 5 ? [-52, -18, 14, 46].map(v => v + (row + 1) * 3) : [];
+    for (let x = -88; x < 88;) {
+      const w = SR(4.2, 6.8);
+      if (stepXs.some(v => Math.abs(x + w / 2 - v) < w / 2 + 1.3)) { x += 1.5; continue; }
+      if (sr() < 0.14) { sr() < 0.5 ? cypress(x, y, z + SR(2, 6), SR(7, 11)) : oliveTree(x, y, z + SR(2, 6)); x += SR(3, 5); continue; }
+      greekHouse(x + w / 2, y, z + SR(2.2, 3.4) + 2.5, w, SR(4.2, 5.6), sr() < 0.35 ? SR(5.2, 6.0) : SR(3.0, 4.2));
+      x += w + SR(0.3, 2.6);
+    }
+    for (let x = -80; x < 80; x += SR(14, 22)) { place(cyl(0.05, 3.2, 6), M.steel, x, y + 1.6, z + 1.8, { cast: false }); place(new THREE.SphereGeometry(0.16, 8, 6), M.lamp, x, y + 3.25, z + 1.8, { cast: false }); }
   }
   // chapel with blue dome on the hill
   const cx = 22, cy = 6 * 3.2, cz = 96;
@@ -750,25 +849,99 @@ function village() {
   place(new THREE.SphereGeometry(2.5, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), M.aegean, cx, cy + 6.2, cz);
   addBox(cx - 2.6, cy, cz - 5, 1.8, 8, 1.8, M.whitewash, { collide: false, s: 3 });
   place(new THREE.SphereGeometry(0.95, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.aegean, cx - 2.6, cy + 8, cz - 5);
+  for (const s of [-1, 1]) place(boxGeo(0.5, 1.2, 0.08, 1), V.recess, cx - 2.6 + s * 0.0, cy + 6.4, cz - 5.92 + (s > 0 ? 0 : 0), { cast: false });
   place(boxGeo(0.12, 1.1, 0.12, 1), M.steelLight, cx, cy + 9.2, cz); place(boxGeo(0.7, 0.12, 0.12, 1), M.steelLight, cx, cy + 9.4, cz);
-  // trees along the west & east outside the walls
-  for (let z = -15; z <= 36; z += 7) { cypress(-48 - sr() * 6, 0, z, SR(8, 12)); cypress(48 + sr() * 4, 0, z + 3, SR(8, 12)); }
+  place(boxGeo(1.4, 2.4, 0.06, 1), V.blue, cx, cy + 1.2, cz - 4.53, { cast: false });
+  // trees outside the walls (east side moved out past the new dock yard)
+  for (let z = -15; z <= 36; z += 7) { cypress(-48 - sr() * 6, 0, z, SR(8, 12)); cypress(76 + sr() * 4, 0, z + 3, SR(8, 12)); }
   for (let i = 0; i < 7; i++) oliveTree(SR(-72, -54), 0, SR(-10, 40));
   // a few houses west
   for (let z = -10; z < 42; z += 9) greekHouse(-63, 0, z, 6, 6, SR(3.5, 6));
 }
 
-function truck(x, z) { // long axis along x, cab at +x
-  addBox(x + 2.6, 0.55, z, 2.0, 1.9, 2.4, M.olive, { s: 2 });              // cab
-  addBox(x + 3.65, 0.55, z, 0.1, 0.9, 2.2, M.steel, { collide: false });     // grille
-  place(boxGeo(0.06, 0.7, 2.1, 1), M.glass, x + 3.58, 2.0, z, { rz: 0.15 });
-  for (const s of [-0.85, 0.85]) place(boxGeo(0.06, 0.18, 0.3, 1), M.lamp, x + 3.71, 1.0, z + s, { cast: false });
-  addBox(x - 1.2, 0.55, z, 5.4, 0.7, 2.4, M.olive, { s: 2 });               // bed
-  addBox(x - 1.2, 1.25, z, 5.2, 1.6, 2.3, M.canvas, { s: 2 });              // tarp
-  addBox(x, 0.25, z, 7.2, 0.3, 1.2, M.steel, { collide: false });           // chassis
-  for (const wx of [x + 2.5, x - 0.6, x - 2.1]) for (const s of [-1, 1]) place(new THREE.CylinderGeometry(0.5, 0.5, 0.36, 22).rotateX(Math.PI / 2), M.rubber, wx, 0.5, z + s * 1.08);
-  addCollider(x - 3.9, 0, z - 1.25, x + 3.7, 0.55, z + 1.25);
+// Army 6x6 cargo truck, long axis along x, cab at +x: lathe tyres with tread, hubs, sloped bonnet, framed windscreen,
+// mirrors, dropside bed with a canvas tilt over hoops, fuel tank, spare wheel, jerry cans, Greek army plate.
+let TRUCK_MAT = null;
+function truckMats() {
+  return TRUCK_MAT || (TRUCK_MAT = {
+    paint: std({ map: T.concrete, color: 0x6d7450, roughness: 0.72, metalness: 0.25 }),
+    dark: std({ color: 0x24261f, roughness: 0.8, metalness: 0.3 }),
+    tyre: std({ color: 0x1a1a19, roughness: 0.95 }),
+    canvas: std({ map: T.burlap, color: 0x7d7a58, roughness: 1 }),
+    lens: std({ color: 0xe8e4d0, emissive: 0xfff2c8, emissiveIntensity: 0.4, roughness: 0.1, metalness: 0.2 }),
+    amber: std({ color: 0xd07a1a, emissive: 0x6a2a00, emissiveIntensity: 0.5, roughness: 0.2 }),
+    plate: std({ map: ctex(256, (g, S) => { g.fillStyle = '#f2f0e6'; g.fillRect(0, 0, S, S); g.fillStyle = '#111'; g.font = '700 74px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ΕΣ 4217', S / 2, S / 2); g.strokeStyle = '#111'; g.lineWidth = 8; g.strokeRect(6, 70, S - 12, S - 140); }), roughness: 0.5 })
+  });
 }
+const TYRE_GEO = (() => {
+  const pts = [[0.3, -0.2], [0.47, -0.21], [0.53, -0.18], [0.56, -0.1], [0.56, 0.1], [0.53, 0.18], [0.47, 0.21], [0.3, 0.2]].map(([r, y]) => new THREE.Vector2(r, y));
+  return new THREE.LatheGeometry(pts, 28).rotateX(Math.PI / 2);
+})();
+function truckWheel(x, y, z, side) {
+  const TM = truckMats();
+  place(TYRE_GEO, TM.tyre, x, y, z);
+  for (let i = 0; i < 18; i++) { const a = i / 18 * Math.PI * 2; place(boxGeo(0.1, 0.05, 0.38, 1), TM.tyre, x + Math.cos(a) * 0.565, y + Math.sin(a) * 0.565, z, { rz: a + Math.PI / 2, cast: false }); }
+  place(new THREE.CylinderGeometry(0.31, 0.31, 0.3, 20).rotateX(Math.PI / 2), TM.paint, x, y, z);
+  place(new THREE.CylinderGeometry(0.12, 0.15, 0.1, 12).rotateX(Math.PI / 2), TM.dark, x, y, z + side * 0.18, { cast: false });
+  for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; place(new THREE.CylinderGeometry(0.025, 0.025, 0.06, 6).rotateX(Math.PI / 2), M.steelLight, x + Math.cos(a) * 0.21, y + Math.sin(a) * 0.21, z + side * 0.16, { cast: false }); }
+}
+function truck(x, z) { // long axis along x, cab at +x
+  const TM = truckMats(), P = TM.paint;
+  const box = (cx, y0, cz, w, h, d, mat, o = {}) => addBox(x + cx, y0, z + cz, w, h, d, mat, Object.assign({ collide: false, s: 1.5 }, o));
+  // chassis, axles, wheels
+  for (const s of [-1, 1]) box(-0.2, 0.62, s * 0.45, 7.6, 0.26, 0.16, TM.dark);
+  for (const ax of [2.45, -1.0, -2.5]) { box(ax, 0.48, 0, 0.18, 0.14, 1.9, TM.dark); for (const s of [-1, 1]) truckWheel(x + ax, 0.56, z + s * 1.06, s); }
+  // wheel arches / mudguards
+  for (const s of [-1, 1]) { box(2.45, 1.16, s * 1.06, 1.45, 0.07, 0.46, P); box(1.72, 0.75, s * 1.06, 0.06, 0.45, 0.46, P); box(-1.75, 1.16, s * 1.06, 2.9, 0.07, 0.46, P); box(-3.25, 0.62, s * 1.06, 0.04, 0.5, 0.46, TM.tyre); }
+  // cab: body, bonnet sloping to the grille, roof, doors, windows
+  box(2.55, 0.85, 0, 1.6, 1.15, 2.28, P);                                   // engine bay / lower cab front
+  place(boxGeo(1.25, 0.12, 2.24, 1.5), P, x + 3.05, 2.02, z, { rz: -0.18 }); // bonnet top
+  box(1.35, 0.85, 0, 1.0, 2.05, 2.32, P);                                   // cab box
+  box(1.32, 2.9, 0, 1.12, 0.08, 2.4, P);                                    // roof
+  place(new THREE.TorusGeometry(0.32, 0.05, 6, 18).rotateX(Math.PI / 2), TM.dark, x + 1.3, 2.99, z + 0.5);
+  box(3.38, 0.75, 0, 0.12, 1.15, 2.0, TM.dark);                             // grille frame
+  for (let i = 0; i < 9; i++) box(3.45, 0.85, -0.8 + i * 0.2, 0.05, 0.95, 0.05, M.steel);
+  box(3.62, 0.5, 0, 0.22, 0.32, 2.5, M.steel);                              // bumper
+  for (const s of [-1, 1]) { place(new THREE.CylinderGeometry(0.13, 0.13, 0.08, 16).rotateZ(Math.PI / 2), TM.lens, x + 3.46, 1.45, z + s * 0.85, { cast: false }); box(3.4, 1.3, s * 0.85, 0.1, 0.3, 0.32, TM.dark); place(boxGeo(0.06, 0.1, 0.16, 1), TM.amber, x + 3.47, 1.05, z + s * 1.0, { cast: false }); }
+  place(boxGeo(0.04, 0.18, 0.5, 1), TM.plate, x + 3.75, 0.66, z, { cast: false });
+  // windscreen: two panes in a frame
+  for (const s of [-1, 1]) place(boxGeo(0.05, 0.78, 0.98, 1), M.glass, x + 1.86, 2.4, z + s * 0.54, { rz: 0.08, cast: false });
+  box(1.87, 1.98, 0, 0.08, 0.06, 2.3, TM.dark); box(1.84, 2.84, 0, 0.08, 0.06, 2.3, TM.dark); box(1.86, 1.98, 0, 0.08, 0.9, 0.08, TM.dark);
+  // doors with windows, handles, steps; mirrors on arms
+  for (const s of [-1, 1]) {
+    place(boxGeo(0.72, 0.62, 0.04, 1), M.glass, x + 1.38, 2.42, z + s * 1.17, { cast: false });
+    box(1.38, 1.0, s * 1.165, 0.9, 0.03, 0.03, TM.dark); box(0.9, 1.0, s * 1.165, 0.03, 1.85, 0.03, TM.dark);
+    box(1.7, 1.75, s * 1.18, 0.14, 0.04, 0.04, M.steelLight);
+    box(1.4, 0.7, s * 1.23, 0.6, 0.06, 0.25, M.steel);
+    box(1.9, 2.3, s * 1.42, 0.05, 0.04, 0.45, M.steel); place(boxGeo(0.08, 0.42, 0.22, 1), TM.dark, x + 1.92, 2.3, z + s * 1.67);
+  }
+  // exhaust stack, air filter, fuel tank, battery box
+  place(cyl(0.07, 1.9, 10), TM.dark, x + 0.78, 2.15, z + 1.0); place(cyl(0.09, 0.16, 10), M.steel, x + 0.78, 3.15, z + 1.0);
+  place(new THREE.CylinderGeometry(0.28, 0.28, 1.1, 16).rotateZ(Math.PI / 2), P, x + 0.2, 0.98, z - 1.0);
+  box(0.2, 0.7, 1.0, 0.8, 0.45, 0.4, TM.dark);
+  // spare wheel behind the cab
+  place(TYRE_GEO, TM.tyre, x + 0.62, 2.0, z, { ry: Math.PI / 2 });
+  // cargo bed with dropsides
+  box(-1.3, 0.75, 0, 5.4, 0.16, 2.4, P);
+  for (const s of [-1, 1]) { box(-1.3, 0.91, s * 1.19, 5.4, 0.6, 0.05, P); for (let i = 0; i < 6; i++) box(-3.9 + i * 1.04, 0.91, s * 1.22, 0.06, 0.6, 0.04, TM.dark); }
+  box(-4.0, 0.75, 0, 0.06, 0.76, 2.4, P);
+  // canvas tilt: walls, rounded roof over hoops, straps, tailgate flap rolled up
+  for (const s of [-1, 1]) box(-1.3, 1.5, s * 1.17, 5.3, 1.05, 0.04, TM.canvas);
+  box(0.0 + 1.33, 1.5, 0, 0.04, 1.05, 2.34, TM.canvas);
+  { const roofG = new THREE.CylinderGeometry(1.17, 1.17, 5.3, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); roofG.scale(1, 0.42, 1); place(roofG, TM.canvas, x - 1.3, 2.55, z); }
+  for (let i = 0; i < 5; i++) { const g = new THREE.CylinderGeometry(1.19, 1.19, 0.07, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); g.scale(1, 0.42, 1); place(g, TM.dark, x - 3.8 + i * 1.25, 2.55, z, { cast: false }); }
+  for (let i = 0; i < 7; i++) for (const s of [-1, 1]) box(-3.85 + i * 0.85, 1.55, s * 1.2, 0.04, 0.9, 0.02, TM.dark);
+  place(new THREE.CylinderGeometry(0.14, 0.14, 2.3, 10).rotateX(Math.PI / 2), TM.canvas, x - 3.98, 2.45, z);
+  place(boxGeo(0.02, 0.95, 2.2, 1), V_TRUCK_DARK(), x - 3.99, 1.95, z, { cast: false });
+  // jerry cans on the side, tail lights
+  for (let i = 0; i < 2; i++) place(boxGeo(0.34, 0.47, 0.16, 1), TM.paint, x - 0.3 - i * 0.38, 1.18, z - 1.32);
+  for (const s of [-1, 1]) place(boxGeo(0.05, 0.12, 0.22, 1), M.red, x - 4.04, 0.95, z + s * 0.95, { cast: false });
+  // collision: cab, bed, under-chassis
+  addCollider(x + 0.8, 0.55, z - 1.2, x + 3.7, 3.0, z + 1.2);
+  addCollider(x - 4.0, 0.75, z - 1.25, x + 0.8, 3.0, z + 1.25);
+  addCollider(x - 4.0, 0, z - 1.25, x + 3.7, 0.75, z + 1.25);
+}
+function V_TRUCK_DARK() { return vmats().recess; }
 
 function ammoCrateAt(x, y, z) {
   addBox(x, y, z, 0.9, 0.45, 0.5, M.olive, { s: 1 });
@@ -799,7 +972,7 @@ function mergeStatic() {
 // ======================================================= PHYSICS
 function collideCircle(pos, r, feetY, headY) {
   for (const c of colliders) {
-    if (c.max[1] <= feetY + STEP || c.min[1] >= headY) continue;
+    if (c.off || c.max[1] <= feetY + STEP || c.min[1] >= headY) continue;
     const cx = clamp(pos.x, c.min[0], c.max[0]), cz = clamp(pos.z, c.min[2], c.max[2]);
     const dx = pos.x - cx, dz = pos.z - cz, d2 = dx * dx + dz * dz;
     if (d2 >= r * r) continue;
@@ -811,26 +984,26 @@ function collideCircle(pos, r, feetY, headY) {
   }
 }
 function groundAt(x, z, r, feetY) {
-  let g = 0; const rr = r * 0.75;
+  let g = -12; const rr = r * 0.75; // land is a collider; off it you drop into the sea
   for (const c of colliders) {
     const top = c.max[1];
-    if (top > feetY + STEP || top <= g) continue;
+    if (c.off || top > feetY + STEP || top <= g) continue;
     if (x + rr > c.min[0] && x - rr < c.max[0] && z + rr > c.min[2] && z - rr < c.max[2]) g = top;
   }
   return g;
 }
 function ceilingAt(x, z, r, headY) {
   let cl = 1e9; const rr = r * 0.75;
-  for (const c of colliders) { const b = c.min[1]; if (b < headY - 0.6 || b >= cl) continue; if (x + rr > c.min[0] && x - rr < c.max[0] && z + rr > c.min[2] && z - rr < c.max[2]) cl = b; }
+  for (const c of colliders) { const b = c.min[1]; if (c.off || b < headY - 0.6 || b >= cl) continue; if (x + rr > c.min[0] && x - rr < c.max[0] && z + rr > c.min[2] && z - rr < c.max[2]) cl = b; }
   return cl;
 }
 // Ray vs world. Returns {t, n:[nx,ny,nz], water}
 function rayWorld(o, d, maxT) {
   let best = maxT, bn = null, water = false;
-  if (d.y < 0) { const t = -o.y / d.y; if (t < best && t > 0) { const z = o.z + d.z * t; if (z > -24.2) { best = t; bn = [0, 1, 0]; } } const tw = (-1.9 - o.y) / d.y; if (tw < best && tw > 0 && o.z + d.z * tw < -25) { best = tw; bn = [0, 1, 0]; water = true; } }
+  if (d.y < 0) { const t = -o.y / d.y; if (t < best && t > 0 && isLand(o.x + d.x * t, o.z + d.z * t)) { best = t; bn = [0, 1, 0]; } const tw = (-1.9 - o.y) / d.y; if (tw < best && tw > 0 && !isLand(o.x + d.x * tw, o.z + d.z * tw)) { best = tw; bn = [0, 1, 0]; water = true; } }
   const O = [o.x, o.y, o.z], D = [d.x, d.y, d.z];
   for (const c of colliders) {
-    if (c.noRay) continue;
+    if (c.noRay || c.off) continue;
     let tmin = 0, tmax = best, ax = -1, sg = 0, miss = false;
     for (let a = 0; a < 3; a++) {
       if (Math.abs(D[a]) < 1e-9) { if (O[a] < c.min[a] || O[a] > c.max[a]) { miss = true; break; } continue; }
@@ -864,7 +1037,7 @@ class Particles {
     for (let i = this.p.length - 1; i >= 0; i--) {
       const q = this.p[i]; q.life -= dt; if (q.life <= 0) { this.p.splice(i, 1); continue; }
       q.vel.y -= q.grav * dt; if (q.drag) q.vel.multiplyScalar(1 - q.drag * dt); q.pos.addScaledVector(q.vel, dt);
-      if (q.pos.y < 0.01 && q.pos.z > -24) { q.pos.y = 0.01; q.vel.y *= -0.3; q.vel.x *= 0.6; q.vel.z *= 0.6; }
+      if (q.pos.y < 0.01 && isLand(q.pos.x, q.pos.z)) { q.pos.y = 0.01; q.vel.y *= -0.3; q.vel.x *= 0.6; q.vel.z *= 0.6; }
     }
     for (const q of this.p) {
       const k = q.life / q.max;
@@ -1146,7 +1319,7 @@ function respawnLocal(s) {
   const sp = SPAWNS[s] || SPAWNS[0];
   P.pos.set(sp[0], 0, sp[1]); P.vel.set(0, 0, 0);
   P.yaw = Math.atan2(sp[0], sp[1] - 7); // face toward map centre
-  P.pitch = 0; P.alive = true; P.hp = 100; P.crouching = false; P.crouch = 0; P.reloadT = 0; P.switchT = 0; P.rope = null; P.climb = 0;
+  P.pitch = 0; P.alive = true; P.hp = 100; P.crouching = false; P.crouch = 0; P.reloadT = 0; P.switchT = 0; P.rope = null; P.climb = 0; P.swim = false; P.ladder = null;
   P.recP.x = P.recP.v = P.recY.x = P.recY.v = 0;
   P.ammo = WEAPONS.map(w => ({ mag: w.mag, reserve: w.reserve }));
   setWeapon(0, true); hideBanner();
@@ -1242,6 +1415,8 @@ function updatePlayer(dt) {
   if (!P.alive) return;
   const w = WEAPONS[P.weapon];
   if (P.rope) { updateRopeRider(dt); return; }
+  if (P.ladder) { updateLadder(dt); return; }
+  if (P.swim) { updateSwim(dt); return; }
   // input direction
   let fx = 0, fz = 0;
   if (keys.KeyW) fz -= 1; if (keys.KeyS) fz += 1; if (keys.KeyA) fx -= 1; if (keys.KeyD) fx += 1;
@@ -1274,6 +1449,7 @@ function updatePlayer(dt) {
   }
   else if (P.pos.y - g > 0.05 && P.vel.y <= 0 && P.onGround && P.pos.y - g < STEP) { P.pos.y = g; }
   else if (P.pos.y > g + 0.02) P.onGround = false;
+  if (P.pos.y < SWIM_Y && g < SWIM_Y) { startSwim(P.minVy); return; }
   P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4);
 
   // crouch (stand only if room)
@@ -1385,7 +1561,7 @@ function updateCamera(dt, t) {
   vm.root.position.copy(pos); vm.root.rotation.set(o.rx, o.ry, o.rz);
   sleeveTo(vm.sleeve, vm.lh.position, vm.anchor);
   if (vm.slide) { P.slideKick = Math.max(0, P.slideKick - dt * 28); const locked = P.ammo[2].mag === 0 && !(P.rl && P.rl.slideFree); vm.slide.position.z = locked ? 0.03 : 0.026 * Math.sin(Math.min(1, P.slideKick) * Math.PI * 0.5); }
-  vm.root.visible = !(w.scope && P.ads > 0.82) && !P.rope;
+  vm.root.visible = !(w.scope && P.ads > 0.82) && !P.rope && !P.swim && !P.ladder;
   wCam.fov = lerp(52, w.wfov, P.ads); wCam.updateProjectionMatrix();
   if (vm._flashT > 0) { vm._flashT -= dt; if (vm._flashT <= 0) vm.flash.visible = false; }
   if (vm.dropT > 0) { vm.dropT -= dt; vm.dropV.y -= 6 * dt; vm.dropMag.position.addScaledVector(vm.dropV, dt); vm.dropMag.rotation.x += dt * 3; if (vm.dropT <= 0) vm.dropMag.visible = false; }
@@ -1588,7 +1764,7 @@ function applyScores(list) { for (const s of list) { const p = playerInfo.get(s.
 const bots = new Map();
 const botCtx = {
   weapons: WEAPONS, nav: null, bots: [], now: () => performance.now() / 1000,
-  los: (a, b) => !losBlocked(a, b), collide: collideCircle, groundAt,
+  los: (a, b) => !losBlocked(a, b), collide: collideCircle, groundAt: (x, z, r, f) => Math.max(SWIM_Y, groundAt(x, z, r, f)),
   clampPos: p => { p.x = clamp(p.x, MAP.x0 + 0.5, MAP.x1 - 0.5); p.z = clamp(p.z, MAP.z0 + 0.4, MAP.z1 - 0.5); },
   pickGoal: () => hideSpots.length && Math.random() < 0.75 ? hideSpots[Math.floor(Math.random() * hideSpots.length)].clone().add(new V3(R(-0.8, 0.8), 0, R(-0.8, 0.8))) : botCtx.nav.randomOpen()
 };
@@ -1731,14 +1907,14 @@ function onNet(m) {
   }
 }
 function dieLocal(killerPos, killerName, head) {
-  P.alive = false; P.deadT = 0; P.killer = killerPos; P.adsHeld = false; mouseDown = false; P.rope = null;
+  P.alive = false; P.deadT = 0; P.killer = killerPos; P.adsHeld = false; mouseDown = false; P.rope = null; P.swim = false; P.ladder = null;
   viewmodels.forEach(v => v.root.visible = false);
   showBanner('Killed', `by ${killerName}${head ? ' · headshot' : ''} · respawning`, 3000);
 }
 function sendState(dt) {
   sendAcc += dt; if (sendAcc < 0.05) return; sendAcc = 0;
   if (!P.alive) return;
-  const f = (P.reloadT > 0 ? 1 : 0) | (P.rope ? 2 : 0) | (P.sprint > 0.5 ? 4 : 0) | (P.ads > 0.5 ? 8 : 0);
+  const f = (P.reloadT > 0 ? 1 : 0) | (P.rope || P.swim || P.ladder ? 2 : 0) | (P.sprint > 0.5 ? 4 : 0) | (P.ads > 0.5 ? 8 : 0);
   netSend({ t: 'state', p: [+P.pos.x.toFixed(3), +P.pos.y.toFixed(3), +P.pos.z.toFixed(3)], y: +P.yaw.toFixed(3), pi: +P.pitch.toFixed(3), c: +P.crouch.toFixed(2), w: P.weapon, f });
 }
 setInterval(() => { if (online) netSend({ t: 'ping', ts: performance.now() }); }, 2000);
@@ -1804,7 +1980,7 @@ function updateHUD(dt) {
   const speed = Math.hypot(P.vel.x, P.vel.z);
   const gap = 5 + (lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : 3) + P.kick * 0.02) * 260;
   const cr = $('cross').children; cr[0].style.left = (-gap - 9) + 'px'; cr[1].style.left = gap + 'px'; cr[2].style.top = (-gap - 9) + 'px'; cr[3].style.top = gap + 'px';
-  $('cross').style.opacity = P.alive && !P.rope ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
+  $('cross').style.opacity = P.alive && !P.rope && !P.swim && !P.ladder ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
   $('scope').style.opacity = w.scope && P.alive ? clamp((P.ads - 0.75) * 5, 0, 1) : 0;
   if (hitT > 0) { hitT -= dt; if (hitT <= 0) $('hit').style.opacity = 0; }
   dmgFlash = Math.max(0, dmgFlash - dt * 0.9);
@@ -2326,7 +2502,7 @@ let nextBoat = 6;
 function spawnBoat(kind, startK = 0) {
   const b = takeModel(kind); b.kind = kind;
   const dirSign = Math.random() < 0.5 ? 1 : -1;
-  const lane = kind === 'corvette' ? R(-210, -160) : R(-120, -80);
+  const lane = kind === 'corvette' ? R(-340, -300) : R(-270, -240);
   b.from = new V3(-dirSign * 650, SEA_Y, lane); b.to = new V3(dirSign * 650, SEA_Y, lane + R(-30, 30));
   b.dur = b.from.distanceTo(b.to) / b.speed; b.t = startK * b.dur;
   b.g.traverse(o => { if (o.isMesh) { o.castShadow = false; } });
@@ -2650,6 +2826,391 @@ function updateRopeRider(dt) {
   if (ropeHeli.phase === 'hoverB' && P.pos.y - groundAt(P.pos.x, P.pos.z, 0.3, P.pos.y + 0.5) < 0.45) releaseRope('Dropped off');
 }
 
+// ======================================================= DOCK: east yard, pier, swimming, ladders, quay crane and the cargo ship
+// Land is two rectangles at y=0 (the compound + east yard, and the pier). Everything else inside MAP is sea: you fall in and swim,
+// and climb out on a ladder. A container ship comes in on a fixed wall-clock schedule (so every player sees the same thing),
+// berths along the pier, the crane loads four containers onto it, and it backs out, turns and leaves.
+const LAND = [{ x0: -42.6, x1: 70.6, z0: -25.2, z1: 38.6 }, { x0: 46, x1: 62, z0: -64, z1: -25.2 }];
+function isLand(x, z, m = 0) { for (const r of LAND) if (x > r.x0 - m && x < r.x1 + m && z > r.z0 - m && z < r.z1 + m) return true; return false; }
+const SWIM_Y = -1.9 - 1.42; // feet height while swimming: eyes just above the surface
+const LADDERS = [ // x, z at the quay face, n = direction from the water onto land
+  { x: -30, z: -25.2, nx: 0, nz: 1 }, { x: 12, z: -25.2, nx: 0, nz: 1 }, { x: 44, z: -25.2, nx: 0, nz: 1 }, { x: 66, z: -25.2, nx: 0, nz: 1 },
+  { x: 46, z: -37, nx: 1, nz: 0 }, { x: 46, z: -55, nx: 1, nz: 0 }, { x: 62, z: -35, nx: -1, nz: 0 }, { x: 62, z: -53, nx: -1, nz: 0 },
+  { x: 54, z: -64, nx: 0, nz: 1 }
+];
+const WATER_BLOCKS = [ // sea inside MAP, for the bots' nav grid (they never go swimming)
+  { min: [-43, 0, -67], max: [46, 2, -25.2] }, { min: [62, 0, -67], max: [71, 2, -25.2] }, { min: [46, 0, -67], max: [62, 2, -64] }
+];
+let DM = null;
+function dockMats() {
+  return DM || (DM = {
+    quay: std({ map: T.concrete, color: 0xb9b4aa, roughness: 0.92 }),
+    quayDark: std({ map: T.concrete, color: 0x7d7a74, roughness: 0.95 }),
+    yellow: std({ color: 0xe0b82a, roughness: 0.55, metalness: 0.2 }),
+    black: std({ color: 0x1b1b1a, roughness: 0.7 }),
+    crane: std({ color: 0x1f5596, roughness: 0.5, metalness: 0.45 }),
+    craneWhite: std({ color: 0xe9ecee, roughness: 0.45, metalness: 0.3 }),
+    rust: std({ map: T.paint, color: 0x9a6a4a, roughness: 0.8, metalness: 0.4 }),
+    fender: std({ color: 0x151515, roughness: 0.95 }),
+    ladder: std({ color: 0xd9a81e, roughness: 0.5, metalness: 0.6 }),
+    reel: std({ map: T.wood, color: 0x9a7a52, roughness: 0.85 }),
+    pipe: std({ color: 0x5a5f63, roughness: 0.45, metalness: 0.8 }),
+    tank: std({ color: 0xdedcd6, roughness: 0.5, metalness: 0.4 })
+  });
+}
+function hazardCurb(x0, z0, x1, z1, gaps = []) { // 0.2 m yellow/black steel kerb along a quay edge (step over it to fall in)
+  const D = dockMats(), along = Math.abs(x1 - x0) > Math.abs(z1 - z0), a0 = along ? x0 : z0, a1 = along ? x1 : z1;
+  const seg = (s0, s1) => {
+    if (s1 - s0 < 0.2) return;
+    for (let s = s0; s < s1 - 0.01; s += 1.0) {
+      const e = Math.min(s1, s + 1.0), m = (s + e) / 2, l = e - s, mat = Math.round(s) % 2 ? D.yellow : D.black;
+      if (along) addBox(m, 0, z0, l, 0.2, 0.3, mat, { collide: false, s: 1 }); else addBox(x0, 0, m, 0.3, 0.2, l, mat, { collide: false, s: 1 });
+    }
+    if (along) addCollider(s0, 0, z0 - 0.15, s1, 0.2, z0 + 0.15); else addCollider(x0 - 0.15, 0, s0, x0 + 0.15, 0.2, s1);
+  };
+  let cur = a0; for (const g of gaps.slice().sort((a, b) => a - b)) { seg(cur, g - 0.7); cur = g + 0.7; } seg(cur, a1);
+}
+function ladderAt(L) {
+  const D = dockMats(), side = L.nx !== 0, px = L.x - L.nx * 0.12, pz = L.z - L.nz * 0.12;
+  for (const s of [-0.24, 0.24]) {
+    const sx = px + (side ? 0 : s), sz = pz + (side ? s : 0);
+    place(boxGeo(0.06, 3.3, 0.06, 1), D.ladder, sx, -1.65 - 0.05, sz, { cast: false });
+    // grab handle arching up over the edge
+    place(boxGeo(0.06, 1.05, 0.06, 1), D.ladder, sx + L.nx * 0.3, 0.52, sz + L.nz * 0.3);
+    place(boxGeo(side ? 0.4 : 0.06, 0.06, side ? 0.06 : 0.4, 1), D.ladder, sx + L.nx * 0.12, 1.04, sz + L.nz * 0.12);
+  }
+  for (let y = -3.1; y < -0.05; y += 0.3) place(boxGeo(side ? 0.05 : 0.48, 0.04, side ? 0.48 : 0.05, 1), D.ladder, px, y, pz, { cast: false });
+  place(boxGeo(side ? 0.02 : 1.1, 3.4, side ? 1.1 : 0.02, 1), D.yellow, L.x - L.nx * 0.015, -1.7, L.z - L.nz * 0.015, { cast: false }); // painted panel so ladders stand out from the water
+}
+function bollard(x, z) { const D = dockMats(); place(new THREE.CylinderGeometry(0.2, 0.26, 0.55, 14), D.black, x, 0.28, z); place(new THREE.CylinderGeometry(0.3, 0.3, 0.07, 14), D.black, x, 0.58, z); addCollider(x - 0.27, 0, z - 0.27, x + 0.27, 0.6, z + 0.27); }
+function cableReel(x, z, r = 0.8) { const D = dockMats(); place(new THREE.CylinderGeometry(r, r, 0.12, 20).rotateX(Math.PI / 2), D.reel, x, r, z - 0.45); place(new THREE.CylinderGeometry(r, r, 0.12, 20).rotateX(Math.PI / 2), D.reel, x, r, z + 0.45); place(new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.8, 16).rotateX(Math.PI / 2), D.black, x, r, z); addCollider(x - r, 0, z - 0.52, x + r, r * 2, z + 0.52); }
+function pipeStack(x, z, len, n = 3) { const D = dockMats(); let k = 0; for (let row = 0; row < n; row++) for (let i = 0; i < n - row; i++) { place(new THREE.CylinderGeometry(0.32, 0.32, len, 14, 1, true).rotateZ(Math.PI / 2), D.pipe, x, 0.32 + row * 0.56, z - (n - row - 1) * 0.32 + i * 0.64); k++; } addCollider(x - len / 2, 0, z - n * 0.33, x + len / 2, n * 0.56, z + n * 0.33); }
+function pallet(x, z, h = 0.9) { addBox(x, 0, z, 1.2, 0.15, 1.0, M.wood, { collide: false, s: 1 }); addBox(x, 0.15, z, 1.1, h, 0.95, sr() < 0.5 ? M.burlap : M.canvas, { s: 1 }); }
+function lightTower(x, z, h = 22) {
+  const D = dockMats();
+  place(new THREE.CylinderGeometry(0.22, 0.4, h, 10), D.craneWhite, x, h / 2, z); addCollider(x - 0.4, 0, z - 0.4, x + 0.4, h, z + 0.4);
+  addBox(x, h, z, 2.4, 0.12, 0.8, M.steel, { collide: false });
+  for (let i = 0; i < 4; i++) { place(boxGeo(0.5, 0.35, 0.2, 1), M.steel, x - 0.9 + i * 0.6, h + 0.32, z - 0.3, { rx: 0.5 }); place(boxGeo(0.42, 0.26, 0.04, 1), M.lamp, x - 0.9 + i * 0.6, h + 0.27, z - 0.42, { rx: 0.5, cast: false }); }
+}
+
+function dockYard() {
+  const D = dockMats();
+  // ---- ground: yard slab and the pier, with quay faces down into the sea (solid walls a swimmer runs into)
+  addBox(56.6, -0.03, 6.7, 28, 0.03, 63.8, D.quay, { collide: false, s: 5, receive: true });
+  addBox(54, -0.7, -44.6, 16, 0.7, 38.8, D.quay, { collide: false, s: 5 });
+  addBox(54, -4.5, -44.6, 16.1, 3.8, 38.9, D.quayDark, { collide: false, s: 4, cast: false });
+  addBox(56.3, -4.5, -24.7, 28.6, 4.5, 1.0, D.quayDark, { collide: false, s: 4, cast: false });
+  for (const r of LAND) addCollider(r.x0, -9, r.z0, r.x1, 0, r.z1, true);
+  // lane markings on the pier and in the yard
+  const line = (x, z, w, d, mat = M.stripe) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), mat); m.position.set(x, 0.012, z); m.receiveShadow = true; scene.add(m); };
+  for (const x of [47.9, 60.1]) { line(x, -44.6, 0.35, 38.6, D.black); addBox(x, 0, -44.6, 0.12, 0.06, 38.6, M.steelLight, { collide: false }); } // crane rails
+  line(54, -44.6, 0.14, 38); for (let z = -60; z < -27; z += 6.5) line(55.5, z, 2.6, 0.1);
+  for (let z = -18; z < 34; z += 4) line(56.5, z, 0.14, 2);
+  // ---- kerbs, bollards, fenders, ladders
+  hazardCurb(42.6, -25.05, 46, -25.05, [44]); hazardCurb(62, -25.05, 70.6, -25.05, [66]);
+  hazardCurb(46.15, -64, 46.15, -25.2, [-37, -55]); hazardCurb(61.85, -64, 61.85, -25.2, [-35, -53]); hazardCurb(46, -63.85, 62, -63.85, [54]);
+  for (const z of [-29, -41, -47, -61]) { bollard(46.7, z); bollard(61.3, z); }
+  bollard(50, -63.2); bollard(58, -63.2); bollard(68.5, -24.5);
+  for (let z = -61; z <= -28; z += 5) { place(new THREE.CylinderGeometry(0.32, 0.32, 1.6, 12), D.fender, 45.72, -1.0, z, { cast: false }); }
+  addBox(45.85, -0.55, -44.6, 0.25, 0.3, 38.4, M.wood, { collide: false, s: 2, cast: false });
+  for (const L of LADDERS) ladderAt(L);
+  // ---- east wall + south wall of the yard (concrete with a mesh fence on top), gate posts in the old east wall
+  const CW = (x, z, w, d) => { addBox(x, 0, z, w, 2.6, d, D.quayDark, { s: 3, ch: 8 }); addBox(x, 2.6, z, w + 0.1, 0.12, d + 0.1, D.quay, { collide: false }); };
+  CW(70.3, 6.7, 0.6, 63.8); CW(56.6, 38.3, 28, 0.6);
+  for (let z = -24; z <= 37; z += 3) place(cyl(0.04, 1.4, 6), M.steel, 70.3, 3.4, z, { cast: false });
+  for (let x = 43.5; x <= 69.5; x += 3) place(cyl(0.04, 1.4, 6), M.steel, x, 3.4, 38.3, { cast: false });
+  for (const [x, z, w, d] of [[70.3, 6.7, 0.02, 63.6], [56.6, 38.3, 27.8, 0.02]]) place(boxGeo(w || 0.02, 1.3, d || 0.02, 2), chainMat(), x, 3.4, z, { cast: false });
+  for (const [z0, z1] of [[-20.5, -15.5], [4.5, 9.5]]) for (const z of [z0, z1]) { addBox(42.3, 0, z, 0.9, 4.2, 0.9, D.quay, { s: 2 }); place(new THREE.SphereGeometry(0.16, 8, 6), M.lamp, 42.3, 4.35, z, { cast: false }); }
+  for (const [z0, z1] of [[-20.5, -15.5], [4.5, 9.5]]) { addBox(43.1, 0, z1 + 2.6, 0.12, 2.2, 5.2, M.steel, { collide: false }); for (let k = 0; k < 9; k++) addBox(43.1, 0.1, z1 + 0.2 + k * 0.6, 0.06, 2.0, 0.05, M.steelLight, { collide: false }); addCollider(42.95, 0, z1 + 0.05, 43.25, 2.2, z1 + 5.2); }
+  // ---- yard: container stacks in blocks with lanes between, a transit shed, cable reels, pipes, light towers
+  const C = (x, z, alongZ, lvl, col) => container(x, z, alongZ, lvl, col);
+  // north block by the quay (cover looking out at the pier)
+  C(50, -16, false, 0, 1); C(50, -16, false, 1, 4); C(50, -13.4, false, 0, 6);
+  C(63, -16, false, 0, 2); C(63, -13.4, false, 0, 0); C(63, -13.4, false, 1, 3);
+  // middle rows
+  C(48.5, -3, true, 0, 5); C(48.5, -3, true, 1, 2); C(51, -3, true, 0, 0);
+  C(62, 0, true, 0, 3); C(64.5, 0, true, 0, 6); C(64.5, 0, true, 1, 1); C(67, 0, true, 0, 4);
+  openContainer(56.5, 8.5, false, 2, 1);
+  C(48, 14, true, 0, 6); C(48, 20.2, true, 0, 3); C(48, 14, true, 1, 1);
+  // transit shed in the south-east corner: open front, offices at the back
+  building({ cx: 61.5, cz: 27.5, w: 15, d: 15.5, h: 7.2, doors: [{ side: 'w', off: -1.5, w: 9, h: 5.5 }, { side: 'n', off: -2.5, w: 5, h: 5 }, { side: 'n', off: 4.5, w: 1.3, h: 2.3 }] });
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) pallet(57 + i * 1.6, 24 + j * 3.2, sr() < 0.5 ? 0.9 : 1.3);
+  crate(66.5, 0, 22, 1.2); crate(66.5, 1.2, 22, 1.0, 0.3); crate(65.2, 0, 22.2, 1.1);
+  addBox(65.8, 0, 32, 2.5, 1.0, 1.0, M.olive, { s: 1 }); ammoCrateAt(60, 0, 33.6); ammoCrateAt(51, 0, -10.8);
+  for (let i = 0; i < 3; i++) addBox(68.4, 0.8 + i * 1.0, 28, 1.0, 0.06, 5, M.steel, { collide: i === 0 }); addBox(68.4, 0, 28, 1.0, 0.8, 5, M.steel, { s: 1 });
+  cableReel(56, -8.5); cableReel(58.2, -8.2, 0.65); pipeStack(56, 18, 6); pipeStack(56.5, 33.5, 5, 2);
+  jersey(44.8, 0, true, 3.2); jersey(53.5, 25, false, 3.2); sandbags(66, -6, 3.2, false); barrel(45, 30, 1); barrel(45.6, 30.6, 2); barrel(44.6, 31.1, 0);
+  lightTower(44.5, -22.5); lightTower(68.5, 12);
+  // gate office
+  building({ cx: 46, cz: 33.5, w: 4.4, d: 4.4, h: 2.8, wall: M.whitewash, roof: M.concreteDark, t: 0.2, base: false, doors: [{ side: 'e', off: 0, w: 1.1, h: 2.2 }, { side: 'n', off: 0, w: 1.6, h: 1.0, y0: 1.1 }] });
+  // pier: container stacks to hide behind, a small hut, cable reel
+  C(58, -30, true, 0, 4); C(58, -30, true, 1, 0); C(50.5, -56, true, 0, 2); C(50.5, -45, true, 0, 5); C(50.5, -45, true, 1, 3);
+  building({ cx: 49.5, cz: -28.5, w: 3.6, d: 3.2, h: 2.6, wall: M.wallMetal, roof: M.roof, t: 0.12, base: false, doors: [{ side: 'e', off: 0, w: 1.0, h: 2.1 }, { side: 'n', off: 0, w: 1.4, h: 0.9, y0: 1.2 }] });
+  cableReel(51.5, -38.5); pallet(57.8, -38); pallet(57.8, -36.8, 1.2);
+  // the compound seawall's railing is rebuilt with gaps at its two ladders (see buildMap); hide spots for bots
+  for (const [x, z] of [[50, -11.5], [63, -11], [56.5, 8.5], [61.5, 27], [58, -34], [50.5, -51], [49.5, 2], [46, 33.5], [65, -3]]) spot(x, z);
+  // ---- industrial port beyond the east wall: tank farm and sheds (scenery)
+  noCastScope = true;
+  for (const [x, z, r, h] of [[84, -12, 6, 9], [84, 4, 6, 9], [98, -6, 7.5, 11], [97, 14, 5, 8]]) { place(new THREE.CylinderGeometry(r, r, h, 32), D.tank, x, h / 2, z); place(new THREE.CylinderGeometry(r * 1.01, r * 1.01, 0.3, 32), D.rust, x, h, z); for (let a = 0; a < 6; a++) place(boxGeo(0.06, h, 0.06, 1), M.steel, x + Math.cos(a) * (r + 0.05), h / 2, z + Math.sin(a) * (r + 0.05)); }
+  for (const [x, z, w, d, h] of [[90, 30, 22, 14, 9], [115, 8, 18, 30, 12], [86, -30, 14, 10, 7]]) { addBox(x, 0, z, w, h, d, M.wallMetal, { collide: false, s: 4 }); addBox(x, h, z, w + 0.6, 0.4, d + 0.6, M.roof, { collide: false, s: 4 }); }
+  addBox(95, -0.2, 5, 60, 0.2, 90, D.quay, { collide: false, s: 6 });
+  noCastScope = false;
+  // ---- the quay crane and the moving parts are built by buildPort() at boot
+}
+let CHAIN = null;
+function chainMat() {
+  return CHAIN || (CHAIN = std({ map: ctex(128, (g, S) => { g.clearRect(0, 0, S, S); g.strokeStyle = 'rgba(160,165,170,1)'; g.lineWidth = 2; for (let i = -S; i < S * 2; i += 16) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + S, S); g.stroke(); g.beginPath(); g.moveTo(i + S, 0); g.lineTo(i, S); g.stroke(); } }), transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.7 }));
+}
+
+// ---------------------------------------------------------------- ship + crane (moving)
+const SHIP = { L: 90, B: 15, F: 5.4, D: 7, x: 37.5, zb: -27.6 - 45 }; // berthed: centre x, centre z (bow 0.6 m short of the seawall)
+const SHIP_CYCLE = 540; // s: arrive 0-110, berth 110-260, back out 260-330, turn 330-390, leave 390-470, gone 470-540
+const PIER_C = 55.5; // x of the containers waiting on the pier
+const LOAD = [ // ship-local bay (z), row (x), tier the box lands on; pier z and pier level
+  { bay: 31, row: -3.75, tier: 2 }, { bay: 24.5, row: -1.25, tier: 2 }, { bay: 24.5, row: 3.75, tier: 2 }, { bay: 18, row: 1.25, tier: 2 }
+];
+LOAD.forEach((s, i) => { s.pz = SHIP.zb + s.bay; s.lvl = i === 1 ? 1 : 0; s.pzz = s.pz; }); // boxes 1 and 2 wait stacked on the pier
+const MOVE_T = [30, 132, 168, 204]; // start of each container move (move 0 picks early and hangs until the ship berths)
+const port = { ship: null, crane: null, boxes: [], legs: [], hull: null, snd: null, hornAt: -1, shipVis: false, offset: 0 };
+function shipKeys(L, B, F, D) {
+  return [
+    { z: -L / 2, w: B * 0.9, ht: 0.1, hb: D * 0.55, y: F, n: 7, nb: 5 },
+    { z: -L * 0.44, w: B * 0.98, ht: 0.1, hb: D * 0.85, y: F, n: 8, nb: 5 },
+    { z: -L * 0.3, w: B, ht: 0.1, hb: D, y: F, n: 9, nb: 7 },
+    { z: L * 0.22, w: B, ht: 0.1, hb: D, y: F, n: 9, nb: 7 },
+    { z: L * 0.36, w: B * 0.92, ht: 0.1, hb: D, y: F + 0.3, n: 7, nb: 4 },
+    { z: L * 0.45, w: B * 0.6, ht: 0.1, hb: D * 0.96, y: F + 0.9, n: 5, nb: 2.4 },
+    { z: L * 0.495, w: B * 0.16, ht: 0.1, hb: D * 0.8, y: F + 1.2, n: 3, nb: 1.6 },
+    { z: L * 0.5, w: 0.0, ht: 0.0, hb: D * 0.7, y: F + 1.3 }
+  ];
+}
+function shipSkin() {
+  return skinTextures(1024, 2048, '#1f3654', {
+    marks(g, W, H) {
+      for (const side of [1, -1]) {
+        const u = side > 0 ? 0.21 : 0.79;
+        const txt = (s, v, size) => { g.save(); g.translate(u * W, (1 - v) * H); g.transform(0, 1, side > 0 ? -1 : 1, 0, 0, 0); g.fillStyle = 'rgba(240,240,236,.95)'; g.font = `700 ${size}px "Arial Narrow", Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(s, 0, 0); g.restore(); };
+        txt('AEGEAN STAR', 0.8, 72); txt('ΑΙΓΑΙΟ ΑΣΤΕΡΙ', 0.3, 56);
+        g.fillStyle = 'rgba(230,230,226,.9)'; for (let k = 0; k < 6; k++) g.fillRect((side > 0 ? 0.12 : 0.86) * W, (1 - 0.985) * H + k * 8, 26, 3); // draught marks near the bow
+        g.fillStyle = 'rgba(220,220,215,.85)'; g.fillRect((side > 0 ? 0.233 : 0.757) * W, 0, 6, H); // sheer line
+      }
+    }
+  });
+}
+function containerBox(color) { const m = new THREE.Mesh(CBOX, containerMats[color % containerMats.length]); m.castShadow = true; m.receiveShadow = true; return m; }
+const CBOX = boxGeo(2.44, 2.59, 6.06, 4.8);
+function makeShip() {
+  const { L, B, F, D } = SHIP, g = new THREE.Group(), skin = shipSkin();
+  am(g, loft(shipKeys(L, B, F, D), 64, 140), hullMaterial(skin.map, skin.bump));
+  am(g, new THREE.BoxGeometry(B * 0.95, 0.12, L * 0.84), NAVY.deck, 0, F + 0.06, 0);
+  // hatch covers and the deck cargo: 6 rows x 10 bays, stacked 1-3 high, instanced per colour (bow bays leave room for the 4 we load)
+  const bays = []; for (let z = -24.5; z <= 31.1; z += 6.5) bays.push(z);
+  for (const z of bays) am(g, new THREE.BoxGeometry(B * 0.86, 0.35, 6.2), NAVY.dark, 0, F + 0.3, z);
+  const per = containerMats.map(() => []), rows = [-6.25, -3.75, -1.25, 1.25, 3.75, 6.25];
+  for (const z of bays) for (const x of rows) {
+    const slot = LOAD.find(s => s.bay === z && s.row === x);
+    const n = slot ? slot.tier : z > 28 ? 1 + (sr() < 0.5 ? 1 : 0) : 1 + Math.floor(sr() * 3);
+    for (let t = 0; t < n; t++) per[Math.floor(sr() * per.length)].push([x, F + 0.48 + 1.295 + t * 2.59, z]);
+  }
+  const mm = new THREE.Matrix4();
+  per.forEach((list, ci) => { if (!list.length) return; const im = new THREE.InstancedMesh(CBOX, containerMats[ci], list.length); list.forEach((p, i) => { mm.makeTranslation(p[0], p[1], p[2]); im.setMatrixAt(i, mm); }); im.castShadow = true; im.receiveShadow = true; g.add(im); });
+  // lashing bridges between bays
+  for (const z of bays) for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.15, 3.5, 0.15), NAVY.grey, s * B * 0.44, F + 1.75, z - 3.25);
+  // accommodation + bridge aft, bridge wings, window band, funnel with blue/white bands, mast and radar
+  const az = -L * 0.38;
+  block(g, NAVY.white, 0, F, az, B * 0.82, 11, 9, 0.95);
+  for (let k = 0; k < 4; k++) for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.06, 0.7, 7.6), NAVY.window, s * B * 0.41, F + 1.6 + k * 2.6, az);
+  am(g, new THREE.BoxGeometry(B * 1.02, 2.6, 4.2), NAVY.white, 0, F + 12.3, az + 2.0);
+  am(g, new THREE.BoxGeometry(B * 0.98, 0.9, 0.08), NAVY.window, 0, F + 12.6, az + 4.12).rotation.x = -0.15;
+  for (let k = 0; k < 5; k++) am(g, new THREE.BoxGeometry(B * 0.7, 0.6, 0.06), NAVY.window, 0, F + 1.6 + k * 2.4, az + 4.53);
+  am(g, new THREE.BoxGeometry(B * 1.04, 0.15, 4.4), NAVY.dark, 0, F + 13.65, az + 2.0);
+  const fun = new THREE.Group(); fun.position.set(0, F + 11, az - 4.2); g.add(fun);
+  am(fun, new THREE.CylinderGeometry(1.8, 2.1, 7, 4, 1), NAVY.white, 0, 3.5, 0).rotation.y = Math.PI / 4;
+  for (const [y, mat] of [[4.6, BLUE_MAT()], [5.6, NAVY.white], [6.5, BLUE_MAT()]]) am(fun, new THREE.CylinderGeometry(1.86, 1.9, 0.7, 4, 1), mat, 0, y, 0).rotation.y = Math.PI / 4;
+  am(fun, new THREE.CylinderGeometry(1.5, 1.5, 0.3, 4, 1), NAVY.dark, 0, 7.05, 0).rotation.y = Math.PI / 4;
+  const radar = mast(g, 0, F + 13.7, az + 1.0, 6);
+  // forecastle bulwark, windlasses, anchor pockets, stern flag, mooring winches
+  am(g, new THREE.BoxGeometry(B * 0.62, 1.4, 6), NAVY.white, 0, F + 1.6, L * 0.44);
+  for (const s of [-1, 1]) { am(g, new THREE.CylinderGeometry(0.5, 0.5, 1.2, 14).rotateZ(Math.PI / 2), NAVY.dark, s * 2.2, F + 2.6, L * 0.42); am(g, new THREE.BoxGeometry(0.2, 1.3, 1.6), NAVY.dark, s * B * 0.27, F - 0.6, L * 0.47); am(g, new THREE.CylinderGeometry(0.4, 0.4, 0.9, 12).rotateZ(Math.PI / 2), NAVY.dark, s * 3, F + 0.6, -L * 0.47); }
+  boatFlag(g, 0, F + 5.2, -L / 2 + 0.6, 2.8); am(g, new THREE.CylinderGeometry(0.06, 0.06, 5, 6), NAVY.dark, 0, F + 2.5, -L / 2 + 0.7);
+  for (const s of [-1, 1]) for (let z = -L * 0.33; z < L * 0.4; z += 2.4) am(g, new THREE.BoxGeometry(0.04, 1.0, 0.04), NAVY.grey, s * B * 0.48, F + 0.5, z);
+  for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.05, 0.05, L * 0.75), NAVY.grey, s * B * 0.48, F + 1.0, 0);
+  // navigation lights
+  am(g, new THREE.SphereGeometry(0.18, 8, 6), AIRM.navR, -B * 0.52, F + 12.5, az + 2.5); am(g, new THREE.SphereGeometry(0.18, 8, 6), AIRM.navG, B * 0.52, F + 12.5, az + 2.5);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return { g, radar };
+}
+let BLUE_M = null; function BLUE_MAT() { return BLUE_M || (BLUE_M = std({ color: 0x1f5fa8, roughness: 0.5, metalness: 0.2 })); }
+function makeCrane() {
+  const D = dockMats(), g = new THREE.Group(), dyn = [];
+  const bx = (w, h, d, mat, x, y, z, rot) => { const m = am(g, new THREE.BoxGeometry(w, h, d), mat, x, y, z); if (rot) m.rotation.set(rot[0] || 0, rot[1] || 0, rot[2] || 0); return m; };
+  // portal: 4 legs on the rails, sill beams, two portal beams, bogies with wheels
+  for (const lx of [-6, 6]) for (const lz of [-6.5, 6.5]) { bx(1.1, 26, 1.1, D.crane, lx, 13, lz); bx(1.4, 1.0, 3.2, D.craneWhite, lx, 0.9, lz); for (const wz of [-1.1, 0, 1.1]) am(g, new THREE.CylinderGeometry(0.38, 0.38, 0.3, 14).rotateZ(Math.PI / 2), M.steel, lx, 0.38, lz + wz); }
+  for (const lx of [-6, 6]) { bx(1.0, 1.4, 13, D.crane, lx, 13, 0); bx(0.8, 0.8, 12, D.crane, lx, 7, 0); const L = Math.hypot(13, 12); for (const s of [-1, 1]) bx(0.35, L, 0.35, D.crane, lx, 13 + 6, 0, [Math.atan2(13, 12) * s, 0, 0]); }
+  for (const lz of [-6.5, 6.5]) { bx(13, 1.6, 1.2, D.crane, 0, 25.6, lz); bx(13, 1.2, 1.0, D.crane, 0, 13, lz); }
+  // boom: two box girders from land side (+x) out over the ship (-x), ties, walkway, apex and stays
+  for (const s of [-1, 1]) { bx(46, 1.7, 0.8, D.craneWhite, -8, 27.4, s * 1.6); bx(46, 0.15, 0.6, M.steel, -8, 26.5, s * 1.0); }
+  for (let x = -30; x <= 14; x += 4) bx(0.4, 0.4, 3.6, D.craneWhite, x, 28.2, 0);
+  for (const s of [-1, 1]) { bx(0.9, 13, 0.9, D.crane, 0, 34.5, s * 1.6, [0, 0, 0]); }
+  bx(1.2, 1.2, 4.2, D.crane, 0, 41, 0);
+  const stay = (x0, y0, x1, y1) => { const L = Math.hypot(x1 - x0, y1 - y0); for (const s of [-1, 1]) { const m = am(g, new THREE.CylinderGeometry(0.09, 0.09, L, 6), M.steel, (x0 + x1) / 2, (y0 + y1) / 2, s * 1.6); m.rotation.z = Math.atan2(x0 - x1, y1 - y0); } };
+  stay(0, 41, -30, 28.2); stay(0, 41, -18, 28.2); stay(0, 41, 14, 28.2);
+  for (const [x, c] of [[-30.6, D.yellow], [-29.6, D.black]]) bx(1.0, 1.75, 4.0, c, x, 27.4, 0);
+  // machinery house on the back of the boom, with Greek flag-blue stripe
+  bx(6, 3.2, 4.8, D.craneWhite, 10, 29.9, 0); bx(6.1, 0.5, 4.85, BLUE_MAT(), 10, 30.9, 0);
+  // trolley + cab, hoist ropes, spreader (moving parts)
+  const trolley = new THREE.Group(); g.add(trolley);
+  am(trolley, new THREE.BoxGeometry(3.2, 1.2, 3.6), D.crane, 0, 26.0, 0);
+  am(trolley, new THREE.BoxGeometry(2.2, 2.0, 2.0), D.craneWhite, 0.8, 24.4, 1.6);
+  am(trolley, new THREE.BoxGeometry(2.0, 1.2, 0.06), NAVY.window, 0.8, 24.6, 2.62); am(trolley, new THREE.BoxGeometry(1.4, 0.06, 1.8), NAVY.window, 0.8, 23.38, 1.6);
+  const spreader = new THREE.Group(); g.add(spreader);
+  am(spreader, new THREE.BoxGeometry(2.44, 0.35, 6.06), D.yellow, 0, 0.18, 0);
+  am(spreader, new THREE.BoxGeometry(1.6, 0.6, 2.2), D.yellow, 0, 0.65, 0);
+  for (const sx of [-1.1, 1.1]) for (const sz of [-2.9, 2.9]) am(spreader, new THREE.BoxGeometry(0.2, 0.3, 0.2), D.black, sx, 0.0, sz);
+  const ropes = []; for (const s of [[-0.6, -0.9], [0.6, -0.9], [-0.6, 0.9], [0.6, 0.9]]) { const r = am(g, new THREE.CylinderGeometry(0.035, 0.035, 1, 5), M.steel, 0, 0, 0); r.userData.o = s; ropes.push(r); }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return { g, trolley, spreader, ropes };
+}
+const CRANE_X = 54, CRANE_PARK_Z = -42;
+const ease = t => t * t * (3 - 2 * t);
+function seg(t, a, b) { return clamp((t - a) / (b - a), 0, 1); }
+// crane pose at schedule time t: gantry z, trolley world x, spreader bottom y, carried box index
+function moveU(i, t) { const t0 = MOVE_T[i]; if (i) return t - t0; if (t < t0 + 14) return t - t0; if (t < 110) return 14; return 14 + (t - 110); }
+function craneAt(t) {
+  let z = CRANE_PARK_Z, tx = CRANE_X + 3, hy = 15, carry = -1;
+  if (t >= 470) return { z, tx, hy, carry };
+  for (let i = 0; i < LOAD.length; i++) {
+    const u = moveU(i, t); if (u < 0) break;
+    const s = LOAD[i], pickTop = (s.lvl + 1) * 2.59, dropTop = SEA_Y + SHIP.F + 0.48 + (s.tier + 1) * 2.59, dropX = SHIP.x + s.row;
+    const hang = i === 0 ? 9 : 22; // the first box only goes up to 9 m and hangs there until the ship is alongside
+    const prevZ = i ? LOAD[i - 1].pz : CRANE_PARK_Z, e = (a, b) => ease(seg(u, a, b));
+    z = prevZ + (s.pz - prevZ) * e(0, 4); tx = CRANE_X + 3; hy = 15; carry = -1;
+    if (u < 4) tx = lerp(CRANE_X + 3, PIER_C, e(0, 4));
+    else if (u < 8) { tx = PIER_C; hy = lerp(15, pickTop, e(4, 8)); }
+    else if (u < 9) { tx = PIER_C; hy = pickTop; }
+    else if (u < 14) { tx = PIER_C; hy = lerp(pickTop, hang, e(9, 14)); carry = i; }
+    else if (u < 21) { tx = lerp(PIER_C, dropX, e(14, 21)); hy = lerp(hang, 22, e(14, 17)); carry = i; }
+    else if (u < 26) { tx = dropX; hy = lerp(22, dropTop, e(21, 26)); carry = i; }
+    else if (u < 27) { tx = dropX; hy = dropTop; carry = i; }
+    else if (u < 30) { tx = dropX; hy = lerp(dropTop, 20, e(27, 30)); }
+    else if (u < 34) { tx = lerp(dropX, CRANE_X + 3, e(30, 34)); hy = lerp(20, 15, e(30, 34)); }
+    if (i === LOAD.length - 1 && u > 34) z = s.pz + (CRANE_PARK_Z - s.pz) * e(34, 44);
+  }
+  return { z, tx, hy, carry };
+}
+// box state: 'pier' | 'crane' | 'ship'
+function boxState(i, t) {
+  if (t >= 470) return 'pier';
+  const t0 = MOVE_T[i], latch = t0 + 9, rel = i === 0 ? 110 + 13 : t0 + 27;
+  if (t < latch) return 'pier'; if (t < rel) return 'crane'; return 'ship';
+}
+// ship pose at schedule time t
+function shipAt(t, out) {
+  const { x, zb } = SHIP;
+  if (t < 110) { const k = t / 110, e = 1 - Math.pow(1 - k, 2.2); out.set(x + 60 * (1 - e), 0, -640 + (zb + 640) * e); return { yaw: Math.atan2(-60 * (1 - k) * 0.02, 1), vis: true, speed: (1 - k) * 10 }; }
+  if (t < 260) { out.set(x, 0, zb); return { yaw: 0, vis: true, speed: 0 }; }
+  if (t < 330) { const e = ease(seg(t, 260, 330)); out.set(x, 0, zb + (-175 - zb) * e); return { yaw: 0, vis: true, speed: 1.5 }; }
+  if (t < 390) { const e = ease(seg(t, 330, 390)); out.set(x + 10 * e, 0, -175); return { yaw: Math.PI * e, vis: true, speed: 0.5 }; }
+  if (t < 470) { const k = seg(t, 390, 470); out.set(x + 10, 0, -175 - 640 * k * k); return { yaw: Math.PI, vis: true, speed: 16 * k }; }
+  return { yaw: Math.PI, vis: false, speed: 0 };
+}
+function buildPort() {
+  port.ship = makeShip(); scene.add(port.ship.g);
+  port.crane = makeCrane(); port.crane.g.position.set(CRANE_X, 0, CRANE_PARK_Z); scene.add(port.crane.g);
+  for (let i = 0; i < LOAD.length; i++) {
+    const m = containerBox([3, 1, 6, 0][i]); scene.add(m);
+    const s = LOAD[i]; addCollider(PIER_C - 1.22, s.lvl * 2.59, s.pzz - 3.03, PIER_C + 1.22, (s.lvl + 1) * 2.59, s.pzz + 3.03);
+    port.boxes.push({ m, col: colliders[colliders.length - 1] });
+  }
+  for (let k = 0; k < 4; k++) { addCollider(0, 0, 0, 0, 0, 0); port.legs.push(colliders[colliders.length - 1]); }
+  addCollider(SHIP.x - SHIP.B / 2, -9, -67, SHIP.x + SHIP.B / 2, SEA_Y + SHIP.F + 0.3, SHIP.zb + SHIP.L / 2 - 0.3); port.hull = colliders[colliders.length - 1]; port.hull.off = true;
+  updatePort(0);
+}
+const _sp = new V3();
+function updatePort(dt) {
+  if (!port.ship) return;
+  const t = ((Date.now() / 1000 + port.offset) % SHIP_CYCLE + SHIP_CYCLE) % SHIP_CYCLE;
+  // ship
+  const sh = shipAt(t, _sp), g = port.ship.g;
+  g.visible = sh.vis;
+  g.position.set(_sp.x, SEA_Y + Math.sin(elapsed * 0.5) * 0.05, _sp.z); g.rotation.set(Math.sin(elapsed * 0.4) * 0.003, sh.yaw, Math.sin(elapsed * 0.33) * 0.004);
+  port.ship.radar.rotation.y += dt * 1.4;
+  port.hull.off = !(t > 100 && t < 268);
+  // crane
+  const c = craneAt(t), cr = port.crane;
+  cr.g.position.z = c.z;
+  cr.trolley.position.x = c.tx - CRANE_X;
+  cr.spreader.position.set(c.tx - CRANE_X, c.hy, 0);
+  for (const r of cr.ropes) { const top = 25.4, bot = c.hy + 0.9, L = Math.max(0.2, top - bot); r.position.set(c.tx - CRANE_X + r.userData.o[0], (top + bot) / 2, r.userData.o[1]); r.scale.set(1, L, 1); }
+  for (const [k, lx, lz] of [[0, -6, -6.5], [1, -6, 6.5], [2, 6, -6.5], [3, 6, 6.5]]) { const L = port.legs[k], x = CRANE_X + lx, z = c.z + lz; L.min[0] = x - 0.7; L.max[0] = x + 0.7; L.min[2] = z - 1.7; L.max[2] = z + 1.7; L.min[1] = 0; L.max[1] = 26; }
+  // containers
+  for (let i = 0; i < port.boxes.length; i++) {
+    const b = port.boxes[i], s = LOAD[i], st = boxState(i, t);
+    b.col.off = st !== 'pier';
+    if (st === 'pier') { if (b.m.parent !== scene) scene.add(b.m); b.m.position.set(PIER_C, s.lvl * 2.59 + 1.295, s.pzz); b.m.rotation.set(0, 0, 0); }
+    else if (st === 'crane') { if (b.m.parent !== scene) scene.add(b.m); b.m.position.set(c.tx, c.hy - 1.295, c.z); b.m.rotation.set(0, Math.sin(elapsed * 0.9 + i) * 0.01, 0); }
+    else { if (b.m.parent !== port.ship.g) port.ship.g.add(b.m); b.m.position.set(s.row, SHIP.F + 0.48 + 1.295 + s.tier * 2.59, s.bay); b.m.rotation.set(0, 0, 0); }
+  }
+  // sounds: horn on arrival and departure, clank on latch and release
+  if (AC) {
+    const horn = (t > 96 && t < 97.5) || (t > 262 && t < 263.5) || (t > 391 && t < 392.5);
+    if (horn && port.hornAt < 0) { port.hornAt = 1; shipHorn(g.position); } else if (!horn) port.hornAt = -1;
+    for (let i = 0; i < LOAD.length; i++) for (const ev of [i === 0 ? MOVE_T[0] + 9 : MOVE_T[i] + 9, i === 0 ? 123 : MOVE_T[i] + 27]) if (port.lastT !== undefined && port.lastT < ev && t >= ev) clank(new V3(c.tx, c.hy, c.z));
+  }
+  port.lastT = t;
+}
+function shipHorn(pos) {
+  const s = spatial(pos), o = out(s.pan, Math.min(1.2, 0.35 + s.gain * 4));
+  for (const f of [92, 138]) { const osc = AC.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = f; const fl = AC.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = 600; const e = AC.createGain(); const t = AC.currentTime + Math.min(1, s.dist / 343); e.gain.setValueAtTime(0, t); e.gain.linearRampToValueAtTime(0.22, t + 0.25); e.gain.setValueAtTime(0.22, t + 2.6); e.gain.exponentialRampToValueAtTime(0.001, t + 3.6); osc.connect(fl); fl.connect(e); e.connect(o); osc.start(t); osc.stop(t + 3.7); }
+}
+function clank(pos) { const s = spatial(pos); const o = out(s.pan, s.gain * 3); noiseHit(o, { dur: 0.25, type: 'bandpass', f: 900, q: 2, g: 0.9 }); tone(o, { f0: 220, f1: 160, dur: 0.3, g: 0.4, type: 'triangle' }); noiseHit(o, { t0: 0.12, dur: 0.15, type: 'bandpass', f: 1500, q: 3, g: 0.4 }); }
+
+// ---------------------------------------------------------------- swimming + ladders
+function startSwim(vy) {
+  P.swim = true; P.pos.y = SWIM_Y; P.vel.y = 0; P.minVy = 0; P.onGround = false; P.ads = 0; P.adsHeld = false; P.crouching = false;
+  viewmodels.forEach(v => v.root.visible = false);
+  splash(P.pos.x, P.pos.z, Math.min(2, Math.abs(vy) / 6 + 0.5));
+  if (AC) { const o = out(0, 0.9); noiseHit(o, { dur: 0.6, type: 'lowpass', f: 1400, g: 1 }); noiseHit(o, { t0: 0.05, dur: 1.0, type: 'bandpass', f: 500, q: 0.7, g: 0.6 }); }
+  showPrompt('You fell in! Swim to a yellow ladder to climb out');
+}
+function splash(x, z, k = 1) {
+  const p = new V3(x, SEA_Y + 0.05, z);
+  for (let i = 0; i < 22 * k; i++) debris.spawn(p, new V3(R(-1.2, 1.2), R(2.5, 6) * k, R(-1.2, 1.2)), R(0.4, 0.8), R(0.03, 0.07), new THREE.Color(0xdcecf2), 12);
+}
+let strokeT = 0, ladderHintT = 0;
+function updateSwim(dt) {
+  let fx = 0, fz = 0;
+  if (keys.KeyW) fz -= 1; if (keys.KeyS) fz += 1; if (keys.KeyA) fx -= 1; if (keys.KeyD) fx += 1;
+  const len = Math.hypot(fx, fz); if (len) { fx /= len; fz /= len; }
+  const speed = keys.ShiftLeft ? 3.2 : 2.2, sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
+  P.vel.x = lerp(P.vel.x, (fx * cy + fz * sy) * speed, Math.min(1, dt * 2.5)); P.vel.z = lerp(P.vel.z, (-fx * sy + fz * cy) * speed, Math.min(1, dt * 2.5));
+  P.pos.x += P.vel.x * dt; P.pos.z += P.vel.z * dt;
+  collideCircle(P.pos, 0.4, P.pos.y, P.pos.y + 1.8);
+  P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4);
+  P.pos.y = SWIM_Y + Math.sin(elapsed * 1.7) * 0.06; P.vel.y = 0; P.onGround = false; P.crouch = lerp(P.crouch, 0, dt * 6);
+  const hs = Math.hypot(P.vel.x, P.vel.z);
+  P.bobAmt = lerp(P.bobAmt, 0, dt * 6); P.sprint = 0; P.ads = 0; P.fireCD -= dt; P.recP.step(dt); P.recY.step(dt); P.kick = Math.max(0, P.kick - dt * 6);
+  strokeT -= dt * (0.6 + hs * 0.5);
+  if (hs > 0.6 && strokeT <= 0) { strokeT = 1; if (AC) { const o = out(R(-0.2, 0.2), 0.35); noiseHit(o, { dur: R(0.3, 0.45), type: 'lowpass', f: R(700, 1100), g: 0.8 }); } const p = P.pos.clone().addScaledVector(new V3(-sy, 0, -cy), 0.6); for (let i = 0; i < 6; i++) debris.spawn(new V3(p.x, SEA_Y + 0.05, p.z), new V3(R(-0.6, 0.6), R(0.8, 1.8), R(-0.6, 0.6)), R(0.3, 0.5), R(0.02, 0.04), new THREE.Color(0xe6f0f4), 9.8); }
+  // ladders
+  let near = null;
+  for (const L of LADDERS) { const lx = L.x - L.nx * 0.5, lz = L.z - L.nz * 0.5; if (Math.hypot(P.pos.x - lx, P.pos.z - lz) < 1.3) near = L; }
+  if (near) {
+    const fwd = new V3(-sy, 0, -cy), into = fwd.x * near.nx + fwd.z * near.nz;
+    if (keys.KeyE || (keys.KeyW && into > 0.4)) { P.swim = false; P.ladder = { L: near, t: 0, x0: P.pos.x, z0: P.pos.z }; keys.KeyE = false; SFX.mech('pouch'); }
+    else if (ladderHintT <= 0) { showPrompt('Ladder: swim into it or press E to climb out'); ladderHintT = 2; }
+  }
+  ladderHintT -= dt;
+}
+function updateLadder(dt) {
+  const A = P.ladder, L = A.L; A.t += dt;
+  const fx = L.x - L.nx * 0.45, fz = L.z - L.nz * 0.45, k = clamp(A.t / 1.7, 0, 1);
+  if (k < 0.85) { const u = k / 0.85; P.pos.x = lerp(A.x0, fx, Math.min(1, u * 3)); P.pos.z = lerp(A.z0, fz, Math.min(1, u * 3)); P.pos.y = lerp(SWIM_Y, 0.05, ease(u)); if (Math.floor(A.t * 3) !== Math.floor((A.t - dt) * 3)) SFX.step(null, 0.6); }
+  else { const u = (k - 0.85) / 0.15; P.pos.x = fx + L.nx * 1.2 * u; P.pos.z = fz + L.nz * 1.2 * u; P.pos.y = 0.05; }
+  P.vel.set(0, 0, 0);
+  if (A.t >= 1.7) { P.ladder = null; P.pos.y = 0; P.onGround = true; P.minVy = 0; viewmodels.forEach((v, k2) => v.root.visible = k2 === P.weapon); setWeapon(P.weapon, true); }
+}
+
 // ======================================================= POST
 let composer, bloom, grade, renderPass, wPass;
 const GradeShader = {
@@ -2803,7 +3364,7 @@ function frame() {
   for (const r of remotes.values()) r.update(dt);
   updateRopeHeli(dt);
   updateTargets(dt);
-  updateFlybys(dt); updateFlags(elapsed); updateBoats(dt, elapsed); updateBoatFlags(elapsed);
+  updateFlybys(dt); updateFlags(elapsed); updateBoats(dt, elapsed); updateBoatFlags(elapsed); updatePort(dt);
   sparks.update(dt); debris.update(dt); smoke.update(dt); updateTracers(dt);
   for (const f of flashLights) if (f.t > 0) { f.t -= dt; if (f.t <= 0) f.l.intensity = 0; }
   sky.position.copy(camera.position);
@@ -2815,7 +3376,7 @@ function frame() {
 
 // ======================================================= BOOT
 buildMap();
-botCtx.nav = new NavGrid(colliders, MAP);
+botCtx.nav = new NavGrid(colliders.concat(WATER_BLOCKS), MAP);
 buildTargets();
 setupPost();
 prewarm();
@@ -2935,4 +3496,4 @@ function showWebLobby() {
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
 }
 requestAnimationFrame(frame);
-window.__tb = { composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };
+window.__tb = { port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };

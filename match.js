@@ -2,13 +2,14 @@
 // so a match with bots plays the same online and offline.
 'use strict';
 
-// Spawn points on the ground of the compound (x, z). The world is 84 x 62 m: x -42..42, z -24..38.
+// Spawn points on the ground (x, z). Compound x -42..42, dock yard x 42..70, pier x 46..62 out to z -64.
 const SPAWNS = [
   [-29, -14], [-29, 0], [-28, 14], [-21, 21.5], [29, -14], [29, 2], [28, 12], [18, 23.5], [-12, -21.5], [12, -21.5],
-  [-39, -20], [39, -20], [-38.5, 21], [38.5, 29.5], [-13, 33], [12, 34], [-39, 31], [37.5, 35.5], [-4, -12], [6, 11]
+  [-39, -20], [39, -20], [-38.5, 21], [38.5, 29.5], [-13, 33], [12, 34], [-39, 31], [37.5, 35.5], [-4, -12], [6, 11],
+  [50, -8], [66, -20], [64, 8], [52, 30], [54, -33], [56, -61.5]
 ];
 // Open ground where the rope helicopter can hover (x, z)
-const ROPE_POINTS = [[8, -10], [-12, 29], [14, 29], [-37.5, -3], [37, 9.5], [-27, -11], [27, -9], [-6, 21]];
+const ROPE_POINTS = [[8, -10], [-12, 29], [14, 29], [-37.5, -3], [37, 9.5], [-27, -11], [27, -9], [-6, 21], [56.5, -15], [62, 13]];
 const BOT_NAMES = ['Kostas', 'Nikos', 'Yannis', 'Stavros', 'Petros', 'Manolis', 'Dimitris', 'Alexis', 'Thanos', 'Vasilis', 'Spyros', 'Lefteris'];
 const TEAM_NAMES = ['Poseidon', 'Ares'];
 const MAX_BOTS = 6;
