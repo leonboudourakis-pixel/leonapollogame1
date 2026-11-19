@@ -10,7 +10,8 @@ const SPAWNS = [
 ];
 // Open ground where the rope helicopter can hover (x, z)
 const ROPE_POINTS = [[8, -10], [-12, 29], [14, 29], [-37.5, -3], [37, 9.5], [-27, -11], [27, -9], [-6, 21], [56.5, -15], [62, 13]];
-const BOT_NAMES = ['Kostas', 'Nikos', 'Yannis', 'Stavros', 'Petros', 'Manolis', 'Dimitris', 'Alexis', 'Thanos', 'Vasilis', 'Spyros', 'Lefteris'];
+const BOT_NAMES = ['Achilles', 'Odysseus', 'Leonidas', 'Perseus', 'Hector', 'Ajax', 'Theseus', 'Jason', 'Herakles', 'Orion', 'Atlas', 'Castor', 'Kostas', 'Nikos', 'Yannis', 'Dimitris', 'Stavros', 'Alexandros', 'Giorgos', 'Spyros', 'Themistokles', 'Miltiades', 'Kanaris', 'Kolokotronis'];
+const MAX_HP = 150; // players and bots; damage depends on where you are hit (see game.js)
 const TEAM_NAMES = ['Poseidon', 'Ares'];
 const MAX_BOTS = 6;
 const ROPE_LIFE = 80000; // ms a rope helicopter visit lasts, from first sight to gone
@@ -56,7 +57,7 @@ class Match {
     const usedLooks = new Set(bots.map(b => b.look));
     while (bots.length < want) {
       let k = 0; while (usedLooks.has(10 + k)) k++; usedLooks.add(10 + k);
-      const b = { id: this.nextId++, send: null, name: this.names[k % this.names.length], slot: -1, kills: 0, deaths: 0, hp: 100, alive: false, pos: null, lastHurt: 0, bot: true, team: -1, look: 10 + k };
+      const b = { id: this.nextId++, send: null, name: this.names[k % this.names.length], slot: -1, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: true, team: -1, look: 10 + k };
       this.players.set(b.id, b); bots.push(b); fresh.push(b);
     }
     if (this.cfg.mode === 'team') {
@@ -77,7 +78,7 @@ class Match {
   join(name, send, isHost, cfg) {
     if (this.humans().length >= this.maxHumans) return null;
     const used = new Set(this.humans().map(p => p.slot)); let slot = 0; while (used.has(slot)) slot++;
-    const p = { id: this.nextId++, send, name: clean(name), slot, kills: 0, deaths: 0, hp: 100, alive: false, pos: null, lastHurt: 0, bot: false, team: -1, look: slot, host: !!isHost };
+    const p = { id: this.nextId++, send, name: clean(name), slot, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: false, team: -1, look: slot, host: !!isHost };
     if (this.humans().length === 0) { this.over = false; this.teamKills = [0, 0]; }
     if (isHost && cfg) this.setCfg(cfg);
     this.players.set(p.id, p);
@@ -127,11 +128,11 @@ class Match {
   spawn(p) {
     if (!this.players.has(p.id) || p.alive) return;
     const s = this.pickSpawn(p);
-    p.hp = 100; p.alive = true; p.pos = [SPAWNS[s][0], 0, SPAWNS[s][1]]; p.lastHurt = 0;
+    p.hp = MAX_HP; p.alive = true; p.pos = [SPAWNS[s][0], 0, SPAWNS[s][1]]; p.lastHurt = 0;
     this.broadcast({ t: 'spawn', id: p.id, s });
   }
   enemies(a, b) { return a !== b && (this.cfg.mode !== 'team' || a.team !== b.team); }
-  damage(t, dmg, from, head, w) {
+  damage(t, dmg, from, head, w, cause) {
     if (!t || !t.alive || this.over) return;
     t.hp -= dmg; t.lastHurt = Date.now();
     this.broadcast({ t: 'hp', id: t.id, hp: Math.max(0, Math.round(t.hp)), from: from ? from.id : 0, dmg });
@@ -139,7 +140,7 @@ class Match {
     t.alive = false; t.deaths++;
     const credit = from && from !== t;
     if (credit) { from.kills++; if (from.team === 0 || from.team === 1) this.teamKills[from.team]++; }
-    this.broadcast({ t: 'kill', killer: credit ? from.id : 0, victim: t.id, head: !!head, w, ...this.scoresMsg() });
+    this.broadcast({ t: 'kill', killer: credit ? from.id : 0, victim: t.id, head: !!head, w, ...(cause ? { cause } : {}), ...this.scoresMsg() });
     const won = credit && (this.cfg.mode === 'team' ? this.teamKills[from.team] >= this.target : from.kills >= this.target);
     if (won) {
       this.over = true; const g = this.gen;
@@ -174,12 +175,12 @@ class Match {
       case 'hit': {
         const a = m.as ? asBot(m.as) : p, t = this.players.get(m.target);
         if (!a || !t || !a.alive || !this.enemies(a, t)) return;
-        this.damage(t, Math.max(0, Math.min(150, +m.dmg || 0)), a, m.head, m.w);
+        this.damage(t, Math.max(0, Math.min(260, +m.dmg || 0)), a, m.head, m.w);
         break;
       }
       case 'fall': { // fall damage or drowning, reported by the faller
         const a = m.as ? asBot(m.as) : p;
-        if (a) this.damage(a, Math.max(0, Math.min(200, +m.dmg || 0)), null, false, -1);
+        if (a) this.damage(a, Math.max(0, Math.min(200, +m.dmg || 0)), null, false, -1, ['heli', 'jet', 'ship'].includes(m.cause) ? m.cause : undefined);
         break;
       }
       case 'cfg': if (p.host) { this.applyCfg(m.cfg); this.log(`  Settings: ${this.cfg.mode === 'team' ? 'teams' : 'free for all'}, ${this.cfg.bots} bots`); } break;
@@ -190,8 +191,8 @@ class Match {
   tick() {
     const now = Date.now();
     for (const p of this.players.values()) {
-      if (p.alive && p.hp < 100 && now - p.lastHurt > 5000) {
-        p.hp = Math.min(100, p.hp + 4);
+      if (p.alive && p.hp < MAX_HP && now - p.lastHurt > 5000) {
+        p.hp = Math.min(MAX_HP, p.hp + 5);
         this.broadcast({ t: 'hp', id: p.id, hp: Math.round(p.hp) });
       }
     }
@@ -208,4 +209,4 @@ class Match {
   close() { clearInterval(this.iv); }
 }
 
-module.exports = { Match, SPAWNS, ROPE_POINTS, TEAM_NAMES, MAX_BOTS, ROPE_LIFE };
+module.exports = { Match, MAX_HP, SPAWNS, ROPE_POINTS, TEAM_NAMES, MAX_BOTS, ROPE_LIFE };

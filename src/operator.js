@@ -316,12 +316,12 @@ export function makeOperator(lookId, bandColor = 0x888888) {
   const arms = [];
   for (const s of [-1, 1]) {
     const sh = new THREE.Group(); sh.position.set(s * 0.19, 0.45, 0); spine.add(sh);
-    const bu = bone(sh, 'body');
+    const bu = bone(sh, 'arm');
     bu.add(tcyl(0.045, 0.054, L1, 12), shirt, 0, -L1 / 2, 0);
     if (s === 1) bu.add(tcyl(0.057, 0.057, 0.045, 12), band, 0, -0.08, 0);
     if (r() < 0.5) bu.add(rbox(0.012, 0.05, 0.06, 0.004), cmat('flagpatch', () => new THREE.MeshStandardMaterial({ map: flagTex(), roughness: 0.8 })), s * 0.052, -0.1, 0, 0, 0, 0);
     const el = new THREE.Group(); el.position.set(0, -L1, 0); sh.add(el);
-    const bf = bone(el, 'body');
+    const bf = bone(el, 'arm');
     const rolled = L.sleeves === 'rolled';
     bf.add(tcyl(0.034, 0.045, 0.25, 12), rolled ? skin : shirt, 0, -0.125, 0);
     if (rolled) bf.add(tcyl(0.05, 0.05, 0.04, 12), shirt, 0, -0.01, 0);
@@ -332,7 +332,7 @@ export function makeOperator(lookId, bandColor = 0x888888) {
 
   // weapons (only the one in hand is shown)
   const gun = new THREE.Group(); spine.add(gun);
-  const guns = [buildCarbine(L, gunMat), buildMarksman(L, gunMat), buildPistol()];
+  const guns = [buildCarbine(L, gunMat), buildMarksman(L, gunMat), buildShotgun(gunMat), buildPistol()];
   for (const gw of guns) { gw.g.visible = false; gun.add(gw.g); gw.g.traverse(o => { if (o.isMesh) { o.castShadow = true; } }); }
   guns[0].g.visible = true;
 
@@ -368,6 +368,11 @@ function buildCarbine(L, mat) {
   else if (L.gun.optic === 'holo') { gpart(g, rbox(0.04, 0.045, 0.08, 0.006), SH.black, 0, 0.07, 0.02); gpart(g, new THREE.PlaneGeometry(0.03, 0.03), SH.lens, 0, 0.075, 0.061); }
   else gpart(g, new THREE.CylinderGeometry(0.017, 0.017, 0.05, 12).rotateX(Math.PI / 2), SH.black, 0, 0.07, 0.03);
   if (L.seed % 2) gpart(g, rbox(0.025, 0.03, 0.06, 0.005), SH.black, 0.03, 0.0, 0.36); // light
+  // machine gun furniture: box magazine, heavy shroud, bipod legs, carry handle
+  gpart(g, rbox(0.07, 0.11, 0.1, 0.01), mat, -0.02, -0.1, 0.06);
+  gpart(g, new THREE.CylinderGeometry(0.026, 0.026, 0.24, 12).rotateX(Math.PI / 2), SH.polymer, 0, 0, 0.42);
+  for (const sx of [-1, 1]) gpart(g, new THREE.CylinderGeometry(0.005, 0.005, 0.22, 6).rotateX(Math.PI / 2), SH.metal, sx * 0.014, -0.03, 0.47);
+  gpart(g, rbox(0.014, 0.04, 0.1, 0.004), SH.metal, 0, 0.09, -0.02);
   const muzzle = new V3(0, 0, L.gun.supp ? 0.71 : 0.62);
   return { g, grip: new V3(0, -0.06, -0.06), fore: new V3(0, -0.035, 0.27), mag: new V3(0, -0.09, 0.08), muzzle, cheek: 0.07 };
 }
@@ -383,7 +388,20 @@ function buildMarksman(L, mat) {
   gpart(g, new THREE.CylinderGeometry(0.029, 0.029, 0.07, 14).rotateX(Math.PI / 2), SH.black, 0, 0.08, 0.2);
   gpart(g, new THREE.CylinderGeometry(0.025, 0.025, 0.05, 14).rotateX(Math.PI / 2), SH.black, 0, 0.08, -0.12);
   gpart(g, new THREE.CircleGeometry(0.026, 14), SH.lens, 0, 0.08, 0.236);
+  gpart(g, new THREE.CylinderGeometry(0.02, 0.02, 0.1, 8).rotateX(Math.PI / 2), SH.metal, 0, 0, 0.88);
+  gpart(g, new THREE.CylinderGeometry(0.005, 0.005, 0.06, 6).rotateZ(Math.PI / 2), SH.metal, 0.04, 0.01, -0.02);
+  gpart(g, new THREE.SphereGeometry(0.012, 8, 6), SH.polymer, 0.07, 0.0, -0.02);
   return { g, grip: new V3(0, -0.06, -0.07), fore: new V3(0, -0.035, 0.32), mag: new V3(0, -0.07, 0.08), muzzle: new V3(0, 0, 0.86), cheek: 0.08 };
+}
+function buildShotgun(mat) {
+  const g = new THREE.Group();
+  gpart(g, rbox(0.046, 0.07, 0.24, 0.008), SH.metal, 0, 0, 0.04);
+  gpart(g, new THREE.CylinderGeometry(0.013, 0.013, 0.5, 10).rotateX(Math.PI / 2), SH.metal, 0, 0.018, 0.4);
+  gpart(g, new THREE.CylinderGeometry(0.011, 0.011, 0.4, 8).rotateX(Math.PI / 2), SH.metal, 0, -0.016, 0.35);
+  gpart(g, new THREE.CylinderGeometry(0.022, 0.022, 0.16, 12).rotateX(Math.PI / 2), SH.polymer, 0, -0.016, 0.34);
+  gpart(g, rbox(0.03, 0.09, 0.04, 0.008), SH.polymer, 0, -0.07, -0.06, -0.35);
+  gpart(g, rbox(0.042, 0.08, 0.26, 0.012), mat, 0, -0.03, -0.22);
+  return { g, grip: new V3(0, -0.06, -0.06), fore: new V3(0, -0.035, 0.34), mag: new V3(0, -0.05, 0.06), muzzle: new V3(0, 0.018, 0.66), cheek: 0.07 };
 }
 function buildPistol() {
   const g = new THREE.Group();
