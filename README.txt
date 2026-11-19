@@ -1,5 +1,5 @@
-TIDEBREAK  ·  1v1 deathmatch  ·  same Wi-Fi OR over the internet
-================================================================
+TIDEBREAK  ·  up to 4 players + bots  ·  same Wi-Fi OR over the internet
+=======================================================================
 
 HOST (one Mac, e.g. Dad's)
   1. Double-click "Start Tidebreak.command".
@@ -24,7 +24,18 @@ JOIN ON THE SAME WI-FI
 
 PLAY
   Type a callsign, click Deploy, click into the game to capture the mouse.
-  First to 10 kills wins. A new match starts 10 seconds later.
+  Up to 4 people can join the same host with the same code.
+  The HOST picks the match in the menu (the others see what was picked):
+    Match:     Free for all, or Teams (Poseidon vs Ares, humans split evenly)
+    Bots:      0 to 6 computer soldiers, each one looks different
+    Bot skill: Recruit, Regular or Veteran
+  Changing a setting restarts the match for everyone.
+  Free for all: first to 10 kills wins.  Teams: first team to 20 wins.
+  A new match starts 10 seconds later.
+  Every minute or two a navy helicopter comes in low and drops a rope.
+  Walk up to it and press E to grab on; it flies you to another part of the
+  island and drops you off (press E to let go early, but mind the fall).
+  Playing alone or offline: Deploy gives a practice match against bots.
   Keep the host's Terminal window open while you play. Ctrl+C stops it.
 
 IF SOMETHING GOES WRONG
@@ -35,7 +46,7 @@ IF SOMETHING GOES WRONG
 
 CONTROLS
   WASD move · Mouse aim · Left click fire · Right click aim down sights
-  Shift sprint · C crouch · Space jump · R reload
+  Shift sprint · C crouch · Space jump · R reload · E grab/let go of the rope
   1 carbine · 2 marksman rifle (scope) · 3 sidearm · Q last weapon
   Tab scoreboard · Esc menu
 

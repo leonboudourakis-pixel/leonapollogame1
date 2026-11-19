@@ -7,6 +7,9 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Water } from 'three/addons/objects/Water.js';
+import { makeOperator, poseOperator, killOperator, reviveOperator, muzzleWorld, lookFor, ropeMaterial } from './operator.js';
+import { NavGrid, Bot, rayCombatants } from './bots.js';
+import { Match, SPAWNS, TEAM_NAMES } from '../match.js';
 import * as P2P from './p2p.js';
 
 const V3 = THREE.Vector3, $ = id => document.getElementById(id);
@@ -30,8 +33,8 @@ const settings = { name: store.get('name', ''), sens: store.get('sens', 1), qual
 if (!QUALITY[settings.quality]) settings.quality = 'auto';
 const SLOT_COLORS = [0xffb547, 0x5fd0ff, 0xa6e35a, 0xff6fb5];
 const SLOT_CSS = ['#ffb547', '#5fd0ff', '#a6e35a', '#ff6fb5'];
-// Spawn points must match server.js
-const SPAWNS = [[-29, -14], [-29, 0], [-29, 12], [-21, 21.5], [29, -14], [29, 0], [29, 12], [21, 21.5], [-12, -21.5], [12, -21.5]];
+const TEAM_COLORS = [0x2f7fe0, 0xe0452f], TEAM_CSS = ['#5aa2ff', '#ff6a52'];
+const MAP = { x0: -42, x1: 42, z0: -24, z1: 38 }; // compound bounds (84 x 62 m)
 
 // ======================================================= RENDERER
 const canvas = $('c');
@@ -106,9 +109,9 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const hemi = new THREE.HemisphereLight(0x8094c8, 0x4a372c, 0.5);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffae73, 3.4);
-sun.position.copy(SUN_DIR).multiplyScalar(90);
+sun.position.copy(SUN_DIR).multiplyScalar(95).add(new V3(0, 0, 7)); sun.target.position.set(0, 0, 7);
 sun.castShadow = true;
-Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 10, far: 220 });
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 10, far: 230 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun, sun.target);
 
@@ -310,25 +313,27 @@ function wallRun(axis, fixed, a0, a1, h, t, gaps, mat, s = 3) {
   let cur = a0;
   for (const g of gaps.slice().sort((a, b) => a.c - b.c)) {
     const g0 = g.c - g.w / 2, g1 = g.c + g.w / 2;
-    seg(cur, g0, 0, h); seg(g0, g1, g.h, h - g.h); cur = g1;
+    seg(cur, g0, 0, h); if (g.y0) seg(g0, g1, 0, g.y0); seg(g0, g1, g.h, h - g.h); cur = g1;
   }
   seg(cur, a1, 0, h);
 }
 // doors: {side:'n'|'s'|'e'|'w', off, w, h}
-function building({ cx, cz, w, d, h, doors = [], wall = M.wallMetal, roof = M.roof, t = 0.3, base = true }) {
-  const gapsFor = side => doors.filter(dr => dr.side === side).map(dr => ({ c: (side === 'n' || side === 's' ? cx : cz) + dr.off, w: dr.w, h: dr.h }));
+function building({ cx, cz, w, d, h, doors = [], wall = M.wallMetal, roof = M.roof, t = 0.3, base = true, noRoof = false }) {
+  const gapsFor = (side, plinth) => doors.filter(dr => dr.side === side && !(plinth && dr.y0)).map(dr => ({ c: (side === 'n' || side === 's' ? cx : cz) + dr.off, w: dr.w, h: dr.h, y0: dr.y0 || 0 }));
   wallRun('x', cz - d / 2 + t / 2, cx - w / 2, cx + w / 2, h, t, gapsFor('n'), wall);
   wallRun('x', cz + d / 2 - t / 2, cx - w / 2, cx + w / 2, h, t, gapsFor('s'), wall);
   wallRun('z', cx - w / 2 + t / 2, cz - d / 2 + t, cz + d / 2 - t, h, t, gapsFor('w'), wall);
   wallRun('z', cx + w / 2 - t / 2, cz - d / 2 + t, cz + d / 2 - t, h, t, gapsFor('e'), wall);
-  addBox(cx, h, cz, w + 0.6, 0.25, d + 0.6, roof, { s: 4.8 });
-  addBox(cx, h + 0.25, cz, w + 0.7, 0.12, d + 0.7, M.steel, { collide: false });
+  if (!noRoof) {
+    addBox(cx, h, cz, w + 0.6, 0.25, d + 0.6, roof, { s: 4.8 });
+    if (roof === M.roof) addBox(cx, h + 0.25, cz, w + 0.7, 0.12, d + 0.7, M.steel, { collide: false });
+  }
   if (base) { // concrete plinth strip outside
     const bt = 0.08, bh = 0.7;
     for (const [side, along] of [['n', 'x'], ['s', 'x'], ['w', 'z'], ['e', 'z']]) {
       const fixed = side === 'n' ? cz - d / 2 - bt / 2 : side === 's' ? cz + d / 2 + bt / 2 : side === 'w' ? cx - w / 2 - bt / 2 : cx + w / 2 + bt / 2;
       const a0 = along === 'x' ? cx - w / 2 - bt : cz - d / 2, a1 = along === 'x' ? cx + w / 2 + bt : cz + d / 2;
-      const gaps = gapsFor(side);
+      const gaps = gapsFor(side, true);
       let cur = a0; const seg = (s0, s1) => { if (s1 - s0 < 0.05) return; const mid = (s0 + s1) / 2, len = s1 - s0; if (along === 'x') addBox(mid, 0, fixed, len, bh, bt, M.concreteDark, { collide: false }); else addBox(fixed, 0, mid, bt, bh, len, M.concreteDark, { collide: false }); };
       for (const g of gaps.sort((a, b) => a.c - b.c)) { seg(cur, g.c - g.w / 2); cur = g.c + g.w / 2; } seg(cur, a1);
     }
@@ -408,8 +413,8 @@ function wallLamp(x, y, z, nx, nz) {
 let water = null;
 function buildMap() {
   // Ground
-  const gGeo = new THREE.PlaneGeometry(64, 48); gGeo.rotateX(-Math.PI / 2);
-  T.asphalt.repeat.set(64 / 6, 48 / 6); T.wet.repeat.set(64 / 26, 48 / 26);
+  const gGeo = new THREE.PlaneGeometry(84, 62); gGeo.rotateX(-Math.PI / 2); gGeo.translate(0, 0, 7);
+  T.asphalt.repeat.set(84 / 6, 62 / 6); T.wet.repeat.set(84 / 26, 62 / 26);
   const ground = new THREE.Mesh(gGeo, M.asphalt); ground.receiveShadow = true; scene.add(ground);
   const oGeo = new THREE.PlaneGeometry(400, 300); oGeo.rotateX(-Math.PI / 2);
   const outer = new THREE.Mesh(oGeo, M.dirt); outer.position.set(0, -0.03, 140); outer.receiveShadow = true; scene.add(outer);
@@ -428,21 +433,21 @@ function buildMap() {
   for (let x = -10; x <= 4; x += 3.5) stripe(x, 15.6, 0.12, 4);
 
   // Seawall + railing (north)
-  addBox(0, -2.6, -24.6, 64, 2.6, 1.2, M.concrete, { s: 3, collide: false });
-  addBox(0, -0.02, -24.6, 64.4, 0.32, 1.25, M.concreteDark, { s: 3, collide: false });
-  for (let x = -31.5; x <= 31.5; x += 2.1) place(cyl(0.04, 1.1, 8), M.rail, x, 0.85, -24.5);
-  for (const y of [0.75, 1.32]) place(new THREE.CylinderGeometry(0.035, 0.035, 63.5, 8).rotateZ(Math.PI / 2), M.rail, 0, y, -24.5);
-  addCollider(-32, -3, -25.2, 32, 0.3, -24.2); addCollider(-32, 0.3, -25.2, 32, 8, -24.2, true);
+  addBox(0, -2.6, -24.6, 84, 2.6, 1.2, M.concrete, { s: 3, collide: false });
+  addBox(0, -0.02, -24.6, 84.4, 0.32, 1.25, M.concreteDark, { s: 3, collide: false });
+  for (let x = -41.4; x <= 41.4; x += 2.07) place(cyl(0.04, 1.1, 8), M.rail, x, 0.85, -24.5);
+  for (const y of [0.75, 1.32]) place(new THREE.CylinderGeometry(0.035, 0.035, 83.5, 8).rotateZ(Math.PI / 2), M.rail, 0, y, -24.5);
+  addCollider(-42, -3, -25.2, 42, 0.3, -24.2); addCollider(-42, 0.3, -25.2, 42, 8, -24.2, true);
   // bollards
-  for (const x of [-22, -8, 8, 22]) { place(new THREE.CylinderGeometry(0.22, 0.28, 0.6, 14), M.steel, x, 0.3, -23.6); addCollider(x - 0.28, 0, -23.9, x + 0.28, 0.6, -23.3); }
+  for (const x of [-36, -22, -8, 8, 22, 36]) { place(new THREE.CylinderGeometry(0.22, 0.28, 0.6, 14), M.steel, x, 0.3, -23.6); addCollider(x - 0.28, 0, -23.9, x + 0.28, 0.6, -23.3); }
 
   // Perimeter walls (S, W, E)
   const PW = (x, z, w, d) => { addBox(x, 0, z, w, 3.6, d, M.whitewash, { s: 3, ch: 8 }); addBox(x, 3.6, z, w + 0.2, 0.18, d + 0.2, M.aegean, { collide: false }); addBox(x, 0, z, w + 0.06, 0.35, d + 0.06, M.stone, { collide: false }); };
-  PW(0, 24.3, 64.6, 0.6); PW(-32.3, 0, 0.6, 49.2); PW(32.3, 0, 0.6, 49.2);
-  for (let x = -30; x <= 30; x += 6) addBox(x, 0, 23.9, 0.5, 3.7, 0.3, M.whitewash, { collide: false });
-  for (let z = -18; z <= 18; z += 6) { addBox(-31.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); addBox(31.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); }
+  PW(0, 38.3, 84.6, 0.6); PW(-42.3, 7, 0.6, 63.2); PW(42.3, 7, 0.6, 63.2);
+  for (let x = -39; x <= 39; x += 6) addBox(x, 0, 37.9, 0.5, 3.7, 0.3, M.whitewash, { collide: false });
+  for (let z = -18; z <= 34; z += 6) { addBox(-41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); addBox(41.9, 0, z, 0.3, 3.7, 0.5, M.whitewash, { collide: false }); }
   // razor wire on walls
-  for (const [x, z, len, rz] of [[0, 24.3, 64, 1], [-32.3, 0, 48, 0], [32.3, 0, 48, 0]]) {
+  for (const [x, z, len, rz] of [[0, 38.3, 84, 1], [-42.3, 7, 62, 0], [42.3, 7, 62, 0]]) {
     const coil = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.008, 4, 10), M.steelLight);
     const n = Math.floor(len / 0.35); const inst = new THREE.InstancedMesh(coil.geometry, M.steelLight, n); const mm = new THREE.Matrix4(), q = new THREE.Quaternion();
     for (let i = 0; i < n; i++) { const o = -len / 2 + i * 0.35; const p = rz ? new V3(x + o, 4.0, z) : new V3(x, 4.0, z + o); q.setFromEuler(new THREE.Euler(0, rz ? 0 : Math.PI / 2, SR(-.2, .2))); mm.compose(p, q, new V3(1, 1, 1)); inst.setMatrixAt(i, mm); }
@@ -512,10 +517,11 @@ function buildMap() {
   crate(28.5, 0, 17.8, 1.2, 0.2);
 
   // ---- Floodlights
-  floodlight(-30.5, -22.5, -18, -10); floodlight(30.5, -22.5, 18, -10); floodlight(-30.5, 22.5, -16, 10); floodlight(30.5, 22.5, 16, 10);
+  floodlight(-40.5, -22.5, -26, -10); floodlight(40.5, -22.5, 26, -10); floodlight(-40.5, 36.5, -22, 26); floodlight(40.5, 36.5, 22, 26);
+  expansion();
 
   // ---- Harbour crane (outside east, scenery)
-  const cx = 44, cz = -30;
+  const cx = 58, cz = -30;
   for (const [dx, dz] of [[-4, -5], [4, -5], [-4, 5], [4, 5]]) addBox(cx + dx, -2, cz + dz, 0.9, 24, 0.9, M.paint, { s: 4, collide: false });
   addBox(cx, 20, cz, 10, 1.4, 12, M.paint, { s: 4, collide: false });
   addBox(cx - 18, 22, cz, 52, 1.2, 1.6, M.paint, { s: 4, collide: false });
@@ -524,10 +530,168 @@ function buildMap() {
   addBox(cx - 26, 6.5, cz, 2.4, 1.2, 6, containerMats[1], { s: 4.8, collide: false });
   noCastScope = true; village(); noCastScope = false;
   // flags: warehouse roof, seawall, painted wall flag
-  wavingFlag(0, 6.37, 0, 9, 2.6, 1.7); wavingFlag(-29, 0, -23.4, 8, 2.2, 1.45); wavingFlag(29, 0, -23.4, 8, 2.2, 1.45);
-  { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 3), new THREE.MeshStandardMaterial({ map: T.flag, roughness: 0.95, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2 })); m.position.set(0, 2.3, 23.99); m.rotation.y = Math.PI; scene.add(m); }
+  wavingFlag(0, 6.37, 0, 9, 2.6, 1.7); wavingFlag(-38, 0, -23.4, 8, 2.2, 1.45); wavingFlag(38, 0, -23.4, 8, 2.2, 1.45);
+  { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 3), new THREE.MeshStandardMaterial({ map: T.flag, roughness: 0.95, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2 })); m.position.set(-14, 2.3, 37.99); m.rotation.y = Math.PI; scene.add(m); }
 
   mergeStatic();
+}
+
+
+// ======================================================= EXPANSION: west/east strips and the southern quarter
+const hideSpots = []; // places bots like to patrol and hold (inside buildings, containers, behind cover)
+const spot = (x, z) => hideSpots.push(new V3(x, 0, z));
+const blueDoorMat = std({ color: 0x1f5fa8, roughness: 0.55 });
+function shutters(x, y, z, nx, nz, w, h) { // open Aegean-blue shutters either side of a window
+  for (const s of [-1, 1]) {
+    const ox = nz ? s * (w / 2 + 0.22) : 0, oz = nx ? s * (w / 2 + 0.22) : 0;
+    place(boxGeo(nz ? 0.42 : 0.05, h, nx ? 0.42 : 0.05, 1), M.aegean, x + ox + nx * 0.05, y, z + oz + nz * 0.05, { cast: false });
+  }
+  place(boxGeo(nz ? w + 0.2 : 0.12, 0.08, nx ? w + 0.2 : 0.12, 1), M.stone, x + nx * 0.06, y - h / 2 - 0.04, z + nz * 0.06, { cast: false });
+}
+function openContainer(x, z, alongZ, color, openEnd = 1) { // a container with its doors swung open: walk in and hide
+  const L = 6.06, H = 2.59, W = 2.44, t = 0.08, mat = containerMats[color % containerMats.length];
+  const w = alongZ ? W : L, d = alongZ ? L : W;
+  addBox(x, 0, z, w, 0.12, d, M.steel, { s: 2 }); // floor
+  addBox(x, H - 0.1, z, w, 0.1, d, mat, { s: 4.8 }); // roof
+  if (alongZ) { addBox(x - W / 2 + t / 2, 0, z, t, H - 0.1, L, mat, { s: 4.8 }); addBox(x + W / 2 - t / 2, 0, z, t, H - 0.1, L, mat, { s: 4.8 }); addBox(x, 0, z - openEnd * (L / 2 - t / 2), W, H - 0.1, t, mat, { s: 4.8 }); }
+  else { addBox(x, 0, z - W / 2 + t / 2, L, H - 0.1, t, mat, { s: 4.8 }); addBox(x, 0, z + W / 2 - t / 2, L, H - 0.1, t, mat, { s: 4.8 }); addBox(x - openEnd * (L / 2 - t / 2), 0, z, t, H - 0.1, W, mat, { s: 4.8 }); }
+  // swung doors
+  for (const s of [-1, 1]) {
+    if (alongZ) { const hx = x + s * W / 2, hz = z + openEnd * L / 2; addBox(hx + s * 0.05, 0.02, hz + openEnd * W / 4, 0.05, H - 0.1, W / 2, mat, { s: 4.8, collide: true }); }
+    else { const hz = z + s * W / 2, hx = x + openEnd * L / 2; addBox(hx + openEnd * W / 4, 0.02, hz + s * 0.05, W / 2, H - 0.1, 0.05, mat, { s: 4.8, collide: true }); }
+  }
+  for (const yy of [0.06, H - 0.06]) addBox(x, yy - 0.06, z, w + 0.04, 0.12, d + 0.04, M.steel, { collide: false });
+  spot(x, z);
+}
+function stoneWall(x, z, len, alongZ, h = 1.05) { addBox(x, 0, z, alongZ ? 0.6 : len, h, alongZ ? len : 0.6, M.stone, { s: 2 }); }
+function table(x, z) { addBox(x, 0.7, z, 0.9, 0.05, 0.9, M.wood, { s: 1, collide: false }); addBox(x, 0, z, 0.12, 0.7, 0.12, M.steel, { collide: false }); addCollider(x - 0.45, 0, z - 0.45, x + 0.45, 0.75, z + 0.45); }
+function stairs(x0, z0, x1, z1, y0, y1, width, mat = M.concrete) { // straight run of box steps, low end at (x0,z0)
+  const n = Math.ceil((y1 - y0) / 0.4), alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+  for (let i = 1; i <= n; i++) {
+    const a = (i - 1) / n, b = i / n, top = y0 + (y1 - y0) * i / n;
+    const cx = lerp(x0, x1, (a + b) / 2), cz = lerp(z0, z1, (a + b) / 2), run = (alongX ? Math.abs(x1 - x0) : Math.abs(z1 - z0)) / n;
+    addBox(cx, 0, cz, alongX ? run : width, top, alongX ? width : run, mat, { s: 1 });
+  }
+}
+function iconTex() {
+  return ctex(256, (g, S) => {
+    g.fillStyle = '#3a2414'; g.fillRect(0, 0, S, S);
+    for (let i = 0; i < 3; i++) {
+      const x = 12 + i * 82, w = 70; g.fillStyle = '#b8892e'; g.fillRect(x, 30, w, 200);
+      g.fillStyle = '#d9b25a'; g.beginPath(); g.arc(x + w / 2, 70, 28, 0, 7); g.fill();
+      g.fillStyle = ['#5b1f1a', '#1d3b6b', '#3b4a24'][i]; g.fillRect(x + 12, 100, w - 24, 120);
+      g.strokeStyle = '#f1d68a'; g.lineWidth = 3; g.strokeRect(x + 3, 33, w - 6, 194);
+    }
+    grain(g, S, 18);
+  });
+}
+function expansion() {
+  // ---- Taverna (south-west): two rooms, blue shutters, outside stairs to a roof terrace
+  { const cx = -30, cz = 31, w = 10, d = 7.6, h = 3.4;
+    building({ cx, cz, w, d, h, wall: M.whitewash, roof: M.whitewash, t: 0.3, base: false, doors: [
+      { side: 'n', off: -2.5, w: 1.3, h: 2.3 }, { side: 's', off: 2.6, w: 1.2, h: 2.2 }, { side: 'n', off: 2.2, w: 1.4, h: 2.2, y0: 1.0 },
+      { side: 'w', off: 0, w: 1.2, h: 2.2, y0: 1.0 }, { side: 's', off: -2.4, w: 1.2, h: 2.2, y0: 1.1 }] });
+    wallRun('z', -31.2, cz - d / 2 + 0.3, cz + d / 2 - 0.3, h, 0.2, [{ c: cz + 1.6, w: 1.1, h: 2.2 }], M.whitewash);
+    place(boxGeo(1.3, 2.3, 0.06, 1), blueDoorMat, cx - 2.5 - 0.7, 1.15, cz - d / 2 - 0.1, { ry: 1.2, cast: false });
+    shutters(cx + 2.2, 1.6, cz - d / 2 - 0.02, 0, -1, 1.4, 1.2); shutters(cx - w / 2 - 0.02, 1.6, cz, -1, 0, 1.2, 1.2);
+    for (const [px, pz, pw, pd] of [[cx, cz - d / 2 - 0.15, w + 0.6, 0.3], [cx - w / 2 - 0.15, cz, 0.3, d + 0.6], [cx, cz + d / 2 + 0.15, w + 0.6, 0.3]]) addBox(px, h + 0.25, pz, pw, 0.55, pd, M.whitewash, { s: 3 });
+    addBox(cx + w / 2 + 0.15, h + 0.25, cz + 1.4, 0.3, 0.55, d - 2.2, M.whitewash, { s: 3 }); // east parapet (gap where the stairs arrive)
+    stairs(cx + w / 2 + 0.75, cz + 3.4, cx + w / 2 + 0.75, cz - 2.6, 0, h + 0.25, 1.2, M.whitewash);
+    addBox(-31, h + 0.25, cz, 2.4, 0.06, 1.6, M.canvas, { collide: false }); // awning shade on the roof
+    // inside: counter, tables, wine barrels
+    addBox(-27.4, 0, cz + 2.2, 2.4, 1.05, 0.6, M.wood, { s: 1 }); table(-33.5, cz - 1.5); table(-28.5, cz - 1.2); crate(-34, 0, cz + 2.4, 1.0);
+    for (const z of [cz + 1.0, cz + 2.1]) { place(new THREE.CylinderGeometry(0.35, 0.35, 0.8, 16).rotateZ(Math.PI / 2), M.wood, -34.2, 0.36, z); addCollider(-34.6, 0, z - 0.36, -33.8, 0.72, z + 0.36); }
+    ammoCrateAt(-26, 0, cz - 2.6);
+    spot(-33.5, cz); spot(-27.5, cz); spot(-29, cz + 2.6);
+    oliveTree(-22, 0, 33); addCollider(-22.25, 0, 32.75, -21.75, 2.2, 33.25);
+  }
+  // ---- Chapel (south centre): blue dome, benches, iconostasis
+  { const cx = 0, cz = 31.5, w = 6, d = 8, h = 4.2;
+    building({ cx, cz, w, d, h, wall: M.whitewash, roof: M.whitewash, t: 0.35, base: false, doors: [
+      { side: 'n', off: 0, w: 1.5, h: 2.6 }, { side: 's', off: 1.2, w: 1.1, h: 2.3 },
+      { side: 'e', off: -1.5, w: 0.7, h: 3.0, y0: 1.6 }, { side: 'w', off: -1.5, w: 0.7, h: 3.0, y0: 1.6 }, { side: 'e', off: 1.6, w: 0.7, h: 3.0, y0: 1.6 }, { side: 'w', off: 1.6, w: 0.7, h: 3.0, y0: 1.6 }] });
+    place(cyl(1.7, 0.9, 28), M.whitewash, cx, h + 0.7, cz + 0.4);
+    place(new THREE.SphereGeometry(1.8, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.aegean, cx, h + 1.15, cz + 0.4);
+    place(boxGeo(0.1, 0.9, 0.1, 1), M.steelLight, cx, h + 3.3, cz + 0.4); place(boxGeo(0.55, 0.1, 0.1, 1), M.steelLight, cx, h + 3.45, cz + 0.4);
+    addBox(cx, h + 0.25, cz - d / 2 + 0.4, 2.2, 1.6, 0.4, M.whitewash, { s: 3 }); // bell gable
+    place(new THREE.CylinderGeometry(0.22, 0.3, 0.4, 14, 1, true), M.paint, cx, h + 1.3, cz - d / 2 + 0.4, { cast: false });
+    for (let i = 0; i < 3; i++) for (const s of [-1, 1]) addBox(cx + s * 1.3, 0, cz - 1.8 + i * 1.3, 1.5, 0.5, 0.45, M.wood, { s: 1 });
+    { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 2.6), std({ map: iconTex(), roughness: 0.5, metalness: 0.3, emissive: 0x2a1a08, emissiveIntensity: 0.6 })); m.position.set(cx, 1.6, cz + d / 2 - 0.36); m.rotation.y = Math.PI; scene.add(m); }
+    addBox(cx, 0, cz + 2.6, 2.2, 0.9, 0.5, M.stone, { s: 1 });
+    spot(cx - 1.8, cz + 2.6); spot(cx + 1.8, cz - 2.8);
+  }
+  // ---- Barracks (south-east): two storeys, inside stairs, windows over the courtyard
+  { const cx = 28, cz = 31, w = 12, d = 7.6, h = 6.4, t = 0.3;
+    building({ cx, cz, w, d, h, wall: M.whitewash, roof: M.concreteDark, t, base: false, doors: [
+      { side: 'n', off: -3.2, w: 1.3, h: 2.4 }, { side: 'w', off: -0.5, w: 1.2, h: 2.3 }, { side: 'e', off: 1.5, w: 1.2, h: 2.3 },
+      { side: 'n', off: 2.4, w: 1.2, h: 2.1, y0: 1.0 }, { side: 's', off: -3.6, w: 1.2, h: 2.1, y0: 1.1 }, { side: 's', off: 3.0, w: 1.2, h: 2.1, y0: 1.1 },
+      { side: 'n', off: -3.2, w: 1.2, h: 5.5, y0: 4.2 }, { side: 'n', off: 0.6, w: 1.2, h: 5.5, y0: 4.2 }, { side: 'n', off: 4.2, w: 1.2, h: 5.5, y0: 4.2 },
+      { side: 'e', off: -1.5, w: 1.2, h: 5.5, y0: 4.2 }, { side: 'w', off: 1.5, w: 1.2, h: 5.5, y0: 4.2 }, { side: 's', off: 1.0, w: 1.2, h: 5.5, y0: 4.2 }] });
+    addBox(cx, 0, cz, w + 0.04, 0.9, d + 0.04, M.stone, { collide: false }); // stone footing outside
+    const ix0 = cx - w / 2 + t, ix1 = cx + w / 2 - t, iz0 = cz - d / 2 + t, iz1 = cz + d / 2 - t, holeZ = iz1 - 1.3, holeX = cx + 0.6;
+    addBox((ix0 + ix1) / 2, 3.0, (iz0 + holeZ) / 2, ix1 - ix0, 0.2, holeZ - iz0, M.concrete, { s: 2 });
+    addBox((holeX + ix1) / 2, 3.0, (holeZ + iz1) / 2, ix1 - holeX, 0.2, iz1 - holeZ, M.concrete, { s: 2 });
+    stairs(ix0 + 0.5, iz1 - 0.65, holeX - 0.6, iz1 - 0.65, 0, 3.2, 1.2);
+    addBox(holeX - 0.3, 0, iz1 - 0.65, 0.6, 3.2, 1.2, M.concrete, { s: 1 });
+    addBox((ix0 + holeX) / 2, 3.2, holeZ + 0.03, holeX - ix0, 0.05, 0.05, M.rail, { collide: false }); addBox((ix0 + holeX) / 2, 4.15, holeZ + 0.03, holeX - ix0, 0.05, 0.05, M.rail, { collide: false });
+    addCollider(ix0, 3.2, holeZ - 0.02, holeX - 0.6, 4.2, holeZ + 0.06, true);
+    for (const [x, y] of [[ix0 + 1, 0], [ix0 + 2.6, 0], [ix1 - 1.2, 0]]) { addBox(x, y, iz0 + 1.1, 0.9, 0.45, 2.0, M.olive, { s: 1 }); addBox(x, y + 1.25, iz0 + 1.1, 0.9, 0.08, 2.0, M.olive, { s: 1, collide: false }); }
+    for (let i = 0; i < 4; i++) addBox(ix1 - 0.3, 0, cz - 1.5 + i * 0.6, 0.5, 1.9, 0.55, M.steel, { s: 1 });
+    table(cx + 2.8, cz + 0.3); crate(ix0 + 1.0, 3.2, iz0 + 1.0); crate(ix0 + 2.2, 3.2, iz0 + 0.9, 1.0, 0.4); table(cx - 1.5, cz - 0.8 + 0.0); 
+    ammoCrateAt(ix1 - 1.0, 3.2, iz0 + 0.8); ammoCrateAt(cx - 3.2, 0, cz + 0.4);
+    sandbags(cx - 3.2, iz0 + 0.5 + 0.0, 1.8, false, 2);
+    for (const off of [-3.2, 0.6, 4.2]) shutters(cx + off, 4.8, cz - d / 2 - 0.02, 0, -1, 1.2, 1.3);
+    spot(cx - 3.5, cz); spot(cx + 3.5, cz - 1);
+  }
+  // ---- Boathouse (east strip): big sea door, office, boat on a trailer
+  { const cx = 37.5, cz = -4, w = 8, d = 17, h = 4.6;
+    building({ cx, cz, w, d, h, doors: [
+      { side: 'n', off: 0, w: 4.4, h: 3.6 }, { side: 'w', off: -5.2, w: 1.4, h: 2.4 }, { side: 'w', off: 6.0, w: 1.2, h: 2.3 }, { side: 's', off: 1.6, w: 1.3, h: 2.3 },
+      { side: 'e', off: -4, w: 1.6, h: 2.6, y0: 1.4 }, { side: 'e', off: 3.5, w: 1.6, h: 2.6, y0: 1.4 }, { side: 'w', off: -1.5, w: 1.6, h: 2.6, y0: 1.4 }] });
+    for (const z of [-4.5, 4.5]) place(boxGeo(0.04, 0.6, 3, 1), M.winGlow, cx + w / 2 + 0.16, 3.9, cz + z, { cast: false });
+    const oz = cz + 4.2; // office in the south-west corner
+    wallRun('x', oz, cx - w / 2 + 0.3, cx - 0.2, 3.0, 0.15, [{ c: cx - 1.4, w: 1.1, h: 2.2 }], M.wallMetal);
+    wallRun('z', cx - 0.2, oz, cz + d / 2 - 0.3, 3.0, 0.15, [{ c: oz + 2.2, w: 1.4, h: 2.3, y0: 1.0 }], M.wallMetal);
+    addBox(cx - 2.2, 3.0, (oz + cz + d / 2 - 0.3) / 2, w / 2 - 0.1, 0.1, cz + d / 2 - 0.3 - oz, M.steel, { collide: true });
+    table(cx - 2.4, oz + 2.4); crate(cx - 3.2, 0, oz + 0.7, 0.9);
+    // RHIB on a trailer
+    { const bx = cx + 0.6, bz = cz - 2.5;
+      addBox(bx, 0.35, bz, 2.2, 0.55, 6.2, NAVY.orange, { s: 2 }); addBox(bx, 0.9, bz, 1.8, 0.1, 5.6, M.rubber, { collide: false });
+      addBox(bx, 0.95, bz + 0.6, 0.9, 0.9, 0.9, M.steel, { collide: false }); place(boxGeo(0.8, 0.4, 0.04, 1), M.glass, bx, 2.0, bz + 1.06, { rx: -0.3, cast: false });
+      addBox(bx, 0, bz, 1.4, 0.35, 6.6, M.steel, { collide: false }); place(cyl(0.45, 0.4, 14).rotateZ(Math.PI / 2), M.rubber, bx, 0.45, bz - 0.8, { cast: true });
+    }
+    addBox(cx + w / 2 - 0.8, 0, cz + 1.5, 0.8, 0.95, 2.6, M.olive, { s: 1 });
+    for (let i = 0; i < 3; i++) addBox(cx + w / 2 - 0.7, 0.7 + i * 0.9, cz - 6.8, 0.7, 0.06, 2.6, M.steel, { collide: i === 0 });
+    addBox(cx + w / 2 - 0.7, 0, cz - 6.8, 0.7, 0.7, 2.6, M.steel, { s: 1 });
+    barrel(35, -11.5, 1); barrel(35.7, -11.8, 0); crate(34.6, 0, -6, 1.1);
+    ammoCrateAt(cx + 3.0, 0, cz + 6.6);
+    spot(cx - 1.5, cz - 6); spot(cx - 2.2, oz + 2.2); spot(cx + 2.5, cz + 3);
+  }
+  // ---- Old stone storehouse (west strip): half its roof has fallen in
+  { const cx = -37.5, cz = 8, w = 7, d = 10, h = 3.4;
+    building({ cx, cz, w, d, h, wall: M.stone, t: 0.45, base: false, noRoof: true, doors: [
+      { side: 'e', off: -2.2, w: 1.6, h: 2.4 }, { side: 'n', off: 0.6, w: 1.4, h: 2.2 }, { side: 'w', off: 2.4, w: 1.0, h: 2.0, y0: 1.1 }, { side: 'e', off: 2.6, w: 1.0, h: 2.0, y0: 1.1 }] });
+    addBox(cx, h, cz + 2.5, w + 0.3, 0.22, d / 2 + 0.2, M.wood, { s: 2 });
+    for (let i = 0; i < 4; i++) addBox(cx, h - 0.05, cz - 4 + i * 1.3, w, 0.18, 0.18, M.wood, { collide: false, s: 1, ry: i === 2 ? 0.12 : 0 });
+    addBox(cx - 1.5, 0, cz - 3.2, 1.6, 0.3, 1.2, M.stone, { s: 1, ry: 0.3 }); addBox(cx + 1.0, 0, cz - 2.2, 1.0, 0.25, 0.8, M.stone, { s: 1 });
+    for (const [x, z] of [[cx - 2.4, cz + 3.6], [cx - 2.4, cz + 2.2], [cx - 2.4, cz + 2.9]]) addBox(x, 0, z, 1.2, 0.8, 0.6, M.burlap, { s: 1 });
+    addBox(cx - 2.4, 0.8, cz + 2.9, 1.2, 0.8, 0.6, M.burlap, { s: 1 });
+    barrel(cx + 2.4, cz + 3.8, 2); crate(cx + 2.2, 0, cz - 3.8, 1.1, 0.4); ammoCrateAt(cx + 1.0, 0, cz + 4.0);
+    spot(cx, cz + 2.5); spot(cx + 1.5, cz - 1);
+  }
+  // ---- Containers you can walk into, and more cover in the new ground
+  openContainer(-37.5, -14, true, 3, -1); openContainer(37.5, 15.5, true, 1, 1); openContainer(-14, 26.5, false, 5, 1); openContainer(17.5, 35.3, false, 0, -1);
+  container(-37.5, -14, true, 1, 6); // stacked box on top of the west open container
+  container(38, 24.5, false, 0, 2);
+  sandbags(-35, -6.5, 3.4, false); sandbags(35, 8.5, 3.2, false); jersey(-37, 20, false, 3.2); jersey(31, -18, true, 3.2);
+  crate(-40, 0, -21.8, 1.2); crate(-38.8, 0, -22, 1.0, 0.4); barrel(40, -21.5, 1); barrel(39.4, -22.1, 3); barrel(-40.2, 26, 0);
+  stoneWall(-20, 31, 6, true); stoneWall(8, 27.2, 5, false); stoneWall(-6, 35.6, 4, false); stoneWall(-9, 25.4, 3.5, false, 0.9);
+  oliveTree(-7.5, 0, 29.5); addCollider(-7.75, 0, 29.25, -7.25, 2.2, 29.75); oliveTree(9, 0, 32); addCollider(8.75, 0, 31.75, 9.25, 2.2, 32.25);
+  // well
+  place(cyl(0.9, 0.85, 20), M.stone, -16, 0.42, 34); addCollider(-16.8, 0, 33.2, -15.2, 0.85, 34.8);
+  for (const s of [-1, 1]) addBox(-16 + s * 0.75, 0.85, 34, 0.12, 1.3, 0.12, M.wood, { collide: false }); addBox(-16, 2.1, 34, 1.7, 0.12, 0.12, M.wood, { collide: false });
+  // existing compound cover worth holding
+  for (const [x, z] of [[0, 0], [-4.5, 2], [4.5, -2], [-26, 19], [-19, -15.5], [22, -10], [-15, 7.5], [17, 3.5], [24, 18], [-4, 13]]) spot(x, z);
 }
 
 const flags = [];
@@ -572,15 +736,15 @@ function oliveTree(x, y, z) {
 function village() {
   // terraced hillside rising to the south, beyond the compound wall
   for (let row = 0; row < 6; row++) {
-    const z = 32 + row * 9, y = row * 3.2;
-    addBox(0, -0.2, z + 4.5, 160, y + 0.2, 9, M.stone, { collide: false, s: 4 });
-    for (let x = -70; x < 70; x += SR(7, 12)) {
+    const z = 46 + row * 9, y = row * 3.2;
+    addBox(0, -0.2, z + 4.5, 180, y + 0.2, 9, M.stone, { collide: false, s: 4 });
+    for (let x = -80; x < 80; x += SR(7, 12)) {
       if (sr() < 0.2) { sr() < 0.5 ? cypress(x, y, z + SR(0, 4), SR(7, 11)) : oliveTree(x, y, z + SR(0, 4)); continue; }
       greekHouse(x, y, z + SR(1.5, 3), SR(4, 7), SR(4, 6), SR(3, 5.5));
     }
   }
   // chapel with blue dome on the hill
-  const cx = 22, cy = 6 * 3.2, cz = 82;
+  const cx = 22, cy = 6 * 3.2, cz = 96;
   addBox(cx, cy, cz, 7, 5, 9, M.whitewash, { collide: false, s: 3 });
   place(cyl(2.4, 1.2, 24), M.whitewash, cx, cy + 5.6, cz);
   place(new THREE.SphereGeometry(2.5, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), M.aegean, cx, cy + 6.2, cz);
@@ -588,10 +752,10 @@ function village() {
   place(new THREE.SphereGeometry(0.95, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.aegean, cx - 2.6, cy + 8, cz - 5);
   place(boxGeo(0.12, 1.1, 0.12, 1), M.steelLight, cx, cy + 9.2, cz); place(boxGeo(0.7, 0.12, 0.12, 1), M.steelLight, cx, cy + 9.4, cz);
   // trees along the west & east outside the walls
-  for (let z = -15; z <= 20; z += 7) { cypress(-38 - sr() * 6, 0, z, SR(8, 12)); cypress(38 + sr() * 4, 0, z + 3, SR(8, 12)); }
-  for (let i = 0; i < 6; i++) oliveTree(SR(-60, -42), 0, SR(-10, 25));
+  for (let z = -15; z <= 36; z += 7) { cypress(-48 - sr() * 6, 0, z, SR(8, 12)); cypress(48 + sr() * 4, 0, z + 3, SR(8, 12)); }
+  for (let i = 0; i < 7; i++) oliveTree(SR(-72, -54), 0, SR(-10, 40));
   // a few houses west
-  for (let z = -10; z < 26; z += 9) greekHouse(-52, 0, z, 6, 6, SR(3.5, 6));
+  for (let z = -10; z < 42; z += 9) greekHouse(-63, 0, z, 6, 6, SR(3.5, 6));
 }
 
 function truck(x, z) { // long axis along x, cab at +x
@@ -713,7 +877,7 @@ class Particles {
 }
 const sparks = new Particles(300, new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
 const debris = new Particles(400, new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 1 }));
-const smoke = new Particles(160, new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ roughness: 1, transparent: true, opacity: 0.22, depthWrite: false }));
+const smoke = new Particles(280, new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ roughness: 1, transparent: true, opacity: 0.22, depthWrite: false }));
 
 // tracers
 const tracers = [];
@@ -803,25 +967,50 @@ function spatial(pos) {
   const pan = dist > 0.1 ? rel.normalize().dot(right) * 0.85 : 0;
   return { pan, gain: 1 / (1 + dist / 9), dist };
 }
+// Every shot is synthesized fresh with random pitch, tone and layer balance. Far shots arrive late
+// (speed of sound) and duller; indoors gets a short slap-back room, outdoors a long tail with echoes off the hills.
 const SFX = {
-  shot(w, pos) {
-    if (!AC) return; const s = spatial(pos); const o = out(s.pan, s.gain * (pos ? 1.25 : 1));
-    const p = w === 1 ? 0.7 : w === 2 ? 1.25 : 1;
-    noiseHit(o, { dur: 0.09, type: 'bandpass', f: 2600 * p, q: 0.6, g: 1.0 });
-    noiseHit(o, { dur: 0.32 * (w === 1 ? 1.6 : 1), type: 'lowpass', f: 1300 * p, g: 0.9 });
-    tone(o, { f0: 150 * p, f1: 45, dur: 0.16 * (w === 1 ? 1.5 : 1), g: 0.9 });
-    noiseHit(o, { t0: 0.04, dur: 0.9 + s.dist / 40, type: 'lowpass', f: 600, g: 0.18 + s.dist / 120 }); // tail/echo
-    if (!pos) noiseHit(o, { t0: 0.0, dur: 0.03, type: 'highpass', f: 5000, g: 0.25 });
+  shot(w, pos, o = {}) {
+    if (!AC) return; const s = spatial(pos); const supp = !!o.supp;
+    const delay = pos ? Math.min(0.5, s.dist / 343) : 0, farK = clamp(s.dist / 120, 0, 1);
+    const out1 = out(s.pan, s.gain * (pos ? 1.25 : 1) * (supp ? 0.45 : 1));
+    const p = (w === 1 ? 0.7 : w === 2 ? 1.25 : 1) * R(0.94, 1.06), air = 1 - farK * 0.7;
+    if (!supp) noiseHit(out1, { t0: delay, dur: R(0.07, 0.11), type: 'bandpass', f: 2600 * p * air * R(0.88, 1.12), q: R(0.5, 0.8), g: R(0.85, 1.1) });
+    noiseHit(out1, { t0: delay, dur: 0.32 * (w === 1 ? 1.6 : 1) * R(0.85, 1.15), type: 'lowpass', f: (supp ? 700 : 1300) * p * air * R(0.85, 1.15), g: R(0.75, 1.0) });
+    tone(out1, { t0: delay, f0: 150 * p * R(0.9, 1.1), f1: R(38, 52), dur: 0.16 * (w === 1 ? 1.5 : 1) * R(0.85, 1.15), g: R(0.75, 1.0) });
+    if (!pos) { // close-up mechanics: bolt carrier and a little high-end snap
+      noiseHit(out1, { t0: R(0.008, 0.02), dur: 0.035, type: 'bandpass', f: R(2600, 3800), q: 3, g: R(0.18, 0.3) });
+      noiseHit(out1, { dur: 0.03, type: 'highpass', f: 5000, g: R(0.18, 0.3) });
+    }
+    if (o.indoor) { // room: short dense reflections, boomy
+      for (let i = 0; i < 3; i++) noiseHit(out1, { t0: delay + R(0.012, 0.05) * (i + 1), dur: R(0.12, 0.22), type: 'lowpass', f: R(900, 1600), g: R(0.18, 0.3) });
+    } else { // outdoors: rolling tail plus a couple of echoes off the village and hills
+      noiseHit(out1, { t0: delay + 0.04, dur: R(0.8, 1.3) + s.dist / 40, type: 'lowpass', f: R(450, 700), g: (0.16 + s.dist / 120) * R(0.8, 1.2) });
+      const n = 1 + (Math.random() < 0.6 ? 1 : 0) + (Math.random() < 0.3 ? 1 : 0);
+      for (let i = 0; i < n; i++) noiseHit(out(s.pan * -0.5, s.gain * 0.5), { t0: delay + R(0.12, 0.5), dur: R(0.18, 0.35), type: 'lowpass', f: R(350, 650), g: R(0.08, 0.16) });
+    }
   },
   hitmarker(head) { if (!AC) return; const o = out(0, 0.5); tone(o, { f0: head ? 2400 : 1500, f1: head ? 2200 : 1300, dur: 0.07, g: 0.5, type: 'triangle' }); },
   kill() { if (!AC) return; const o = out(0, 0.5); tone(o, { f0: 900, f1: 880, dur: 0.12, g: 0.5, type: 'square' }); tone(o, { t0: 0.09, f0: 1350, f1: 1320, dur: 0.18, g: 0.4, type: 'square' }); },
-  hurt() { if (!AC) return; const o = out(0, 0.8); tone(o, { f0: 90, f1: 40, dur: 0.18, g: 1 }); noiseHit(o, { dur: 0.12, f: 900, g: 0.5 }); },
-  crack(pos) { if (!AC) return; const s = spatial(pos); const o = out(s.pan, 0.5); noiseHit(o, { dur: 0.05, type: 'highpass', f: 3000, g: 0.6 }); },
-  click() { if (!AC) return; const o = out(0, 0.4); noiseHit(o, { dur: 0.025, type: 'highpass', f: 3500, g: 0.6 }); },
-  reload(step) { if (!AC) return; const o = out(0.2, 0.5); noiseHit(o, { dur: step ? 0.05 : 0.08, type: 'bandpass', f: step ? 2800 : 1500, q: 2, g: 0.7 }); tone(o, { f0: step ? 700 : 400, f1: 300, dur: 0.04, g: 0.2, type: 'square' }); },
-  step(pos, loud = 1) { if (!AC) return; const s = spatial(pos); const o = out(s.pan, s.gain * loud * (pos ? 1.6 : 0.5)); noiseHit(o, { dur: 0.09, type: 'bandpass', f: R(500, 800), q: 1.2, g: 0.8 }); tone(o, { f0: 90, f1: 50, dur: 0.06, g: 0.3 }); },
+  hurt() { if (!AC) return; const o = out(0, 0.8); tone(o, { f0: R(80, 100), f1: 40, dur: 0.18, g: 1 }); noiseHit(o, { dur: 0.12, f: R(700, 1100), g: 0.5 }); },
+  crack(pos) { if (!AC) return; const s = spatial(pos); const o = out(s.pan, 0.5); noiseHit(o, { dur: R(0.04, 0.06), type: 'highpass', f: R(2600, 3600), g: 0.6 }); },
+  click() { if (!AC) return; const o = out(0, 0.4); noiseHit(o, { dur: 0.025, type: 'highpass', f: R(3000, 4000), g: 0.6 }); },
+  tinkle() { if (!AC) return; const o = out(R(-0.3, 0.3), 0.22); const n = 2 + (Math.random() * 2 | 0); for (let i = 0; i < n; i++) { const t0 = i * R(0.05, 0.12); tone(o, { t0, f0: R(3800, 6500), f1: R(3500, 6000), dur: R(0.03, 0.07), g: R(0.2, 0.45) / (i + 1), type: 'triangle' }); } },
+  mech(kind, pos) { // reload and handling sounds, never quite the same twice
+    if (!AC) return; const s = spatial(pos); const o = out(pos ? s.pan : R(0.05, 0.3), (pos ? s.gain * 1.2 : 0.55) * R(0.85, 1.15));
+    const nh = (t0, dur, f, q, g, type = 'bandpass') => noiseHit(o, { t0, dur, type, f: f * R(0.88, 1.12), q, g });
+    if (kind === 'magout') { nh(0, 0.05, 2200, 3, 0.6); nh(R(0.03, 0.05), 0.09, 900, 1.5, 0.4); }
+    else if (kind === 'drop') { nh(0, 0.07, 700, 1.2, 0.7); nh(R(0.08, 0.14), 0.05, 1500, 2, 0.35); }
+    else if (kind === 'pouch') { nh(0, R(0.12, 0.2), 1800, 0.6, 0.25, 'highpass'); nh(R(0.05, 0.1), 0.08, 600, 0.8, 0.3); }
+    else if (kind === 'magin') { nh(0, 0.04, 1600, 2.5, 0.6); nh(R(0.04, 0.07), 0.05, 3200, 4, 0.7); tone(o, { t0: 0.05, f0: R(600, 800), f1: 300, dur: 0.04, g: 0.2, type: 'square' }); }
+    else if (kind === 'slap') { nh(0, 0.05, 1200, 1.5, 0.9); nh(0.01, 0.04, 3400, 4, 0.5); }
+    else if (kind === 'charge') { nh(0, 0.05, 2500, 3, 0.7); nh(R(0.12, 0.18), 0.06, 2900, 3.5, 0.9); tone(o, { t0: 0.14, f0: R(700, 900), f1: 350, dur: 0.05, g: 0.25, type: 'square' }); }
+    else if (kind === 'slide') { nh(0, 0.06, 2800, 3, 0.9); tone(o, { t0: 0.01, f0: R(800, 1000), f1: 400, dur: 0.05, g: 0.25, type: 'square' }); }
+  },
+  reload(step) { this.mech(step ? 'magin' : 'magout'); },
+  step(pos, loud = 1) { if (!AC) return; const s = spatial(pos); const o = out(s.pan, s.gain * loud * (pos ? 1.6 : 0.5) * R(0.8, 1.15)); noiseHit(o, { dur: R(0.07, 0.11), type: 'bandpass', f: R(450, 850), q: R(0.9, 1.5), g: 0.8 }); tone(o, { f0: R(80, 100), f1: 50, dur: 0.06, g: 0.3 }); if (Math.random() < 0.3) noiseHit(o, { t0: 0.03, dur: 0.05, type: 'highpass', f: 3000, g: 0.12 }); },
   land() { if (!AC) return; const o = out(0, 0.5); noiseHit(o, { dur: 0.15, f: 500, g: 0.9 }); },
-  ammo() { if (!AC) return; const o = out(0, 0.5); for (let i = 0; i < 3; i++) noiseHit(o, { t0: i * 0.07, dur: 0.05, type: 'bandpass', f: 3000, q: 3, g: 0.6 }); }
+  ammo() { if (!AC) return; const o = out(0, 0.5); for (let i = 0; i < 3; i++) noiseHit(o, { t0: i * R(0.05, 0.09), dur: 0.05, type: 'bandpass', f: R(2600, 3400), q: 3, g: 0.6 }); }
 };
 function ambient() {
   const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
@@ -833,11 +1022,24 @@ function ambient() {
 }
 
 // ======================================================= WEAPONS
+// Recoil, cadence and reloads vary shot to shot: kick strength, drift, muzzle flip, flash, sound and reload timing all jitter.
+// Camera recoil and the viewmodel run on damped springs, so kicks rise and settle smoothly instead of snapping.
 const WEAPONS = [
-  { name: 'Carbine', mag: 30, reserve: 120, rpm: 720, auto: true, dmg: 26, head: 2.2, hip: 0.032, ads: 0.0035, recoil: 0.0105, recoilH: 0.006, reload: 2.1, fov: 52, wfov: 40, range: 200 },
-  { name: 'Marksman rifle', mag: 8, reserve: 32, rpm: 150, auto: false, dmg: 55, head: 2.5, hip: 0.07, ads: 0.0, recoil: 0.04, recoilH: 0.01, reload: 2.6, fov: 20, wfov: 30, range: 400, scope: true },
-  { name: 'Sidearm', mag: 12, reserve: 48, rpm: 420, auto: false, dmg: 30, head: 2.0, hip: 0.022, ads: 0.006, recoil: 0.022, recoilH: 0.008, reload: 1.5, fov: 62, wfov: 46, range: 120 }
+  { name: 'Carbine', mag: 30, reserve: 120, rpm: 720, auto: true, dmg: 26, head: 2.2, hip: 0.032, ads: 0.0035, kickV: 0.0108, kickH: 0.0042, drift: 0.55, first: 1.45, reload: 2.1, reloadEmpty: 2.7, fov: 52, wfov: 40, range: 200, bot: 0.014, vk: { z: 1.0, rx: 2.0, rz: 0.9, x: 0.25 } },
+  { name: 'Marksman rifle', mag: 8, reserve: 32, rpm: 150, auto: false, dmg: 55, head: 2.5, hip: 0.07, ads: 0.0, kickV: 0.033, kickH: 0.008, drift: 0.2, first: 1.0, reload: 2.5, reloadEmpty: 3.05, fov: 20, wfov: 30, range: 400, scope: true, bot: 0.006, vk: { z: 1.6, rx: 3.0, rz: 1.2, x: 0.3 } },
+  { name: 'Sidearm', mag: 12, reserve: 48, rpm: 420, auto: false, dmg: 30, head: 2.0, hip: 0.022, ads: 0.006, kickV: 0.02, kickH: 0.009, drift: 0.3, first: 1.15, reload: 1.5, reloadEmpty: 1.9, fov: 62, wfov: 46, range: 120, bot: 0.02, vk: { z: 0.8, rx: 3.6, rz: 1.4, x: 0.2 } }
 ];
+class Spring { // damped spring; v is kicked by impulses
+  constructor(k, zeta) { this.k = k; this.c = 2 * zeta * Math.sqrt(k); this.x = 0; this.v = 0; }
+  step(dt) { const n = dt > 0.02 ? 2 : 1, h = dt / n; for (let i = 0; i < n; i++) { this.v += (-this.k * this.x - this.c * this.v) * h; this.x += this.v * h; } return this.x; }
+}
+const VMS = { z: new Spring(240, 0.72), rx: new Spring(190, 0.66), rz: new Spring(150, 0.55), x: new Spring(210, 0.8), y: new Spring(230, 0.8) };
+const smoothK = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+function along(k, keys) { // piecewise smooth path: keys = [[k, V3], ...]
+  if (k <= keys[0][0]) return keys[0][1].clone();
+  for (let i = 0; i < keys.length - 1; i++) { const [k0, a] = keys[i], [k1, b] = keys[i + 1]; if (k <= k1) return a.clone().lerp(b, smoothK((k - k0) / Math.max(1e-4, k1 - k0))); }
+  return keys[keys.length - 1][1].clone();
+}
 const VM = {
   polymer: std({ color: 0x1b1c1e, roughness: 0.62, metalness: 0.15 }),
   metal: std({ color: 0x2a2c2f, roughness: 0.33, metalness: 0.85 }),
@@ -851,6 +1053,13 @@ const VM = {
 function vbox(parent, w, h, d, mat, x, y, z, rx = 0) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.x = rx; parent.add(m); return m; }
 function vcyl(parent, r, len, mat, x, y, z, seg = 16) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg).rotateX(Math.PI / 2), mat); m.position.set(x, y, z); parent.add(m); return m; }
 function limb(parent, a, b, r, mat) { const d = b.clone().sub(a), L = d.length(); const m = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.85, r, L, 12), mat); m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new V3(0, 1, 0), d.normalize()); parent.add(m); return m; }
+function sleeveTo(m, a, b) { const d = b.clone().sub(a), L = d.length(); m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new V3(0, 1, 0), d.normalize()); m.scale.set(1, L, 1); }
+function supportHand(r, at, anchor, gloveDims) { // left hand as its own group so reloads can move it
+  const lh = new THREE.Group(); lh.position.copy(at); r.add(lh);
+  vbox(lh, ...gloveDims, VM.glove, 0, 0, 0);
+  const sl = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.034, 1, 12), VM.sleeve); r.add(sl);
+  return { lh, lhBase: at.clone(), sleeve: sl, anchor };
+}
 function buildViewmodels() {
   const vms = [];
   { // Carbine
@@ -869,10 +1078,10 @@ function buildViewmodels() {
     vbox(r, 0.004, 0.042, 0.06, VM.polymer, 0.021, 0.09, -0.04); vbox(r, 0.004, 0.042, 0.06, VM.polymer, -0.021, 0.09, -0.04); vbox(r, 0.046, 0.005, 0.06, VM.polymer, 0, 0.112, -0.04);
     const gl = new THREE.Mesh(new THREE.PlaneGeometry(0.038, 0.04), VM.lens); gl.position.set(0, 0.09, -0.06); r.add(gl);
     const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0014, 8, 6), VM.dot); dot.position.set(0, 0.09, -0.07); r.add(dot);
-    // hands
+    const ch = new THREE.Group(); ch.position.set(0, 0.04, 0.12); r.add(ch); vbox(ch, 0.05, 0.012, 0.025, VM.metal, 0, 0, 0);
     vbox(r, 0.05, 0.075, 0.09, VM.glove, 0.008, -0.10, 0.075, -0.3); limb(r, new V3(0.02, -0.13, 0.11), new V3(0.17, -0.32, 0.34), 0.038, VM.sleeve);
-    vbox(r, 0.07, 0.05, 0.11, VM.glove, -0.008, -0.048, -0.36); limb(r, new V3(-0.03, -0.065, -0.33), new V3(-0.22, -0.32, -0.06), 0.04, VM.sleeve);
-    vms.push({ root: r, mag, muzzle: new V3(0, 0, -0.67), hip: new V3(0.15, -0.19, -0.40), ads: new V3(0, -0.09, -0.27), eject: new V3(0.03, 0.01, -0.03) });
+    const sh = supportHand(r, new V3(-0.008, -0.048, -0.36), new V3(-0.22, -0.34, -0.04), [0.07, 0.05, 0.11]);
+    vms.push({ root: r, mag, ch, ...sh, magBase: mag.position.clone(), chPull: 0.075, muzzle: new V3(0, 0, -0.67), hip: new V3(0.15, -0.19, -0.40), ads: new V3(0, -0.09, -0.27), eject: new V3(0.03, 0.01, -0.03) });
   }
   { // Marksman
     const r = new THREE.Group();
@@ -885,20 +1094,22 @@ function buildViewmodels() {
     vcyl(r, 0.02, 0.28, VM.metal, 0, 0.085, -0.06); vcyl(r, 0.029, 0.07, VM.metal, 0, 0.085, -0.22); vcyl(r, 0.025, 0.06, VM.metal, 0, 0.085, 0.1);
     vcyl(r, 0.026, 0.002, VM.lens, 0, 0.085, -0.256); vbox(r, 0.012, 0.03, 0.03, VM.metal, 0, 0.115, -0.05);
     for (const z of [-0.12, 0.02]) vbox(r, 0.03, 0.04, 0.025, VM.metal, 0, 0.055, z);
+    const ch = new THREE.Group(); ch.position.set(0.034, 0.015, 0.0); r.add(ch); vbox(ch, 0.02, 0.014, 0.03, VM.metal, 0, 0, 0);
     vbox(r, 0.05, 0.075, 0.09, VM.glove, 0.008, -0.10, 0.085, -0.3); limb(r, new V3(0.02, -0.13, 0.12), new V3(0.17, -0.32, 0.35), 0.038, VM.sleeve);
-    vbox(r, 0.07, 0.05, 0.11, VM.glove, -0.008, -0.05, -0.42); limb(r, new V3(-0.03, -0.065, -0.39), new V3(-0.22, -0.32, -0.08), 0.04, VM.sleeve);
-    vms.push({ root: r, mag, muzzle: new V3(0, 0, -0.9), hip: new V3(0.15, -0.19, -0.38), ads: new V3(0, -0.085, -0.2), eject: new V3(0.03, 0.01, -0.02) });
+    const sh = supportHand(r, new V3(-0.008, -0.05, -0.42), new V3(-0.22, -0.34, -0.06), [0.07, 0.05, 0.11]);
+    vms.push({ root: r, mag, ch, ...sh, magBase: mag.position.clone(), chPull: 0.06, muzzle: new V3(0, 0, -0.9), hip: new V3(0.15, -0.19, -0.38), ads: new V3(0, -0.085, -0.2), eject: new V3(0.03, 0.01, -0.02) });
   }
   { // Sidearm
     const r = new THREE.Group();
-    vbox(r, 0.03, 0.035, 0.19, VM.metal, 0, 0.02, -0.08);
+    const slide = new THREE.Group(); r.add(slide); vbox(slide, 0.03, 0.035, 0.19, VM.metal, 0, 0.02, -0.08);
+    vbox(slide, 0.006, 0.01, 0.008, VM.polymer, 0.008, 0.042, 0.005); vbox(slide, 0.006, 0.01, 0.008, VM.polymer, -0.008, 0.042, 0.005); vbox(slide, 0.004, 0.01, 0.004, VM.polymer, 0, 0.042, -0.165);
     vbox(r, 0.028, 0.025, 0.16, VM.polymer, 0, -0.005, -0.07);
     vbox(r, 0.03, 0.10, 0.05, VM.polymer, 0, -0.06, 0.0, -0.25);
     const mag = new THREE.Group(); mag.position.set(0, -0.1, 0.01); r.add(mag); vbox(mag, 0.032, 0.02, 0.055, VM.polymer, 0, -0.01, 0);
-    vbox(r, 0.006, 0.01, 0.008, VM.polymer, 0.008, 0.042, 0.005); vbox(r, 0.006, 0.01, 0.008, VM.polymer, -0.008, 0.042, 0.005); vbox(r, 0.004, 0.01, 0.004, VM.polymer, 0, 0.042, -0.165);
-    vbox(r, 0.05, 0.07, 0.07, VM.glove, 0.006, -0.065, 0.02); vbox(r, 0.04, 0.065, 0.075, VM.glove, -0.03, -0.075, 0.015);
-    limb(r, new V3(0.01, -0.09, 0.05), new V3(0.15, -0.3, 0.32), 0.036, VM.sleeve); limb(r, new V3(-0.04, -0.09, 0.05), new V3(-0.2, -0.3, 0.3), 0.038, VM.sleeve);
-    vms.push({ root: r, mag, muzzle: new V3(0, 0.02, -0.18), hip: new V3(0.09, -0.12, -0.34), ads: new V3(0, -0.047, -0.3), eject: new V3(0.02, 0.03, -0.06) });
+    vbox(r, 0.05, 0.07, 0.07, VM.glove, 0.006, -0.065, 0.02);
+    limb(r, new V3(0.01, -0.09, 0.05), new V3(0.15, -0.3, 0.32), 0.036, VM.sleeve);
+    const sh = supportHand(r, new V3(-0.03, -0.075, 0.015), new V3(-0.2, -0.3, 0.3), [0.04, 0.065, 0.075]);
+    vms.push({ root: r, mag, slide, ...sh, magBase: mag.position.clone(), muzzle: new V3(0, 0.02, -0.18), hip: new V3(0.09, -0.12, -0.34), ads: new V3(0, -0.047, -0.3), eject: new V3(0.02, 0.03, -0.06), pistol: true });
   }
   for (const vm of vms) {
     vm.root.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
@@ -906,6 +1117,8 @@ function buildViewmodels() {
     const fl = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: T.flash, color: new THREE.Color(4, 3, 2), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
     fl.position.copy(vm.muzzle); fl.visible = false; vm.root.add(fl); vm.flash = fl;
     const fl2 = fl.clone(); fl2.rotation.y = Math.PI / 2; fl.add(fl2);
+    // a spare magazine that falls away on empty reloads
+    vm.dropMag = vm.mag.clone(); vm.dropMag.visible = false; wCam.add(vm.dropMag); vm.dropV = new V3(); vm.dropT = 0;
   }
   return vms;
 }
@@ -916,87 +1129,25 @@ const casingGeo = new THREE.CylinderGeometry(0.0045, 0.0045, 0.022, 8).rotateZ(M
 for (let i = 0; i < 12; i++) { const m = new THREE.Mesh(casingGeo, VM.brass); m.visible = false; m.frustumCulled = false; wCam.add(m); casings.push({ m, v: new V3(), t: 0, spin: new V3() }); }
 let casingIdx = 0;
 
-// ======================================================= OPERATOR MODEL
-const GEO = {
-  thigh: new THREE.CapsuleGeometry(0.085, 0.3, 4, 10), shin: new THREE.CapsuleGeometry(0.07, 0.3, 4, 10), boot: new THREE.BoxGeometry(0.12, 0.11, 0.27),
-  pelvis: new THREE.BoxGeometry(0.36, 0.2, 0.22), torso: new THREE.BoxGeometry(0.4, 0.5, 0.23), vest: new THREE.BoxGeometry(0.44, 0.38, 0.3),
-  pouch: new THREE.BoxGeometry(0.09, 0.11, 0.06), head: new THREE.SphereGeometry(0.115, 16, 12), helmet: new THREE.SphereGeometry(0.135, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
-  band: new THREE.CylinderGeometry(0.137, 0.137, 0.03, 18, 1, true), upper: new THREE.CapsuleGeometry(0.062, 0.2, 4, 8), fore: new THREE.CapsuleGeometry(0.055, 0.2, 4, 8),
-  hand: new THREE.BoxGeometry(0.07, 0.08, 0.09), pack: new THREE.BoxGeometry(0.32, 0.36, 0.14), nvg: new THREE.BoxGeometry(0.1, 0.05, 0.06)
-};
-const OPM = {
-  pants: std({ color: 0x4e4a3a, roughness: 0.95 }), shirt: std({ color: 0x5a5a45, roughness: 0.95 }), vest: std({ color: 0x3a3c30, roughness: 0.85 }),
-  boots: std({ color: 0x2a241d, roughness: 0.8 }), skin: std({ color: 0x8e6a52, roughness: 0.7 }), helmet: std({ color: 0x45463a, roughness: 0.6, metalness: 0.1 }),
-  glove: std({ color: 0x23221e, roughness: 0.9 }), gun: std({ color: 0x1d1e20, roughness: 0.5, metalness: 0.6 })
-};
-function makeOperator(slot) {
-  const g = new THREE.Group(); g.rotation.order = 'YXZ'; const hit = [];
-  const team = new THREE.MeshStandardMaterial({ color: SLOT_COLORS[slot], emissive: SLOT_COLORS[slot], emissiveIntensity: 0.6, roughness: 0.6 });
-  const mk = (geo, mat, parent, x, y, z, part) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); if (part) { m.userData.part = part; hit.push(m); } return m; };
-  const legs = [];
-  const hipsG = new THREE.Group(); g.add(hipsG);
-  for (const s of [-1, 1]) {
-    const hip = new THREE.Group(); hip.position.set(0.11 * s, 0.92, 0); hipsG.add(hip);
-    mk(GEO.thigh, OPM.pants, hip, 0, -0.22, 0, 'leg');
-    const knee = new THREE.Group(); knee.position.set(0, -0.46, 0); hip.add(knee);
-    mk(GEO.shin, OPM.pants, knee, 0, -0.2, 0, 'leg'); mk(GEO.boot, OPM.boots, knee, 0, -0.41, 0.04);
-    legs.push({ hip, knee });
-  }
-  mk(GEO.pelvis, OPM.pants, hipsG, 0, 0.96, 0, 'body');
-  const torso = new THREE.Group(); torso.position.set(0, 1.02, 0); hipsG.add(torso);
-  mk(GEO.torso, OPM.shirt, torso, 0, 0.25, 0, 'body'); mk(GEO.vest, OPM.vest, torso, 0, 0.24, 0.01, 'body');
-  for (const x of [-0.13, 0, 0.13]) mk(GEO.pouch, OPM.vest, torso, x, 0.12, 0.18);
-  mk(GEO.pack, OPM.vest, torso, 0, 0.27, -0.2, 'body');
-  mk(GEO.head, OPM.skin, torso, 0, 0.64, 0.01, 'head');
-  mk(GEO.helmet, OPM.helmet, torso, 0, 0.665, 0, 'head');
-  mk(GEO.band, team, torso, 0, 0.68, 0);
-  mk(GEO.nvg, OPM.helmet, torso, 0, 0.74, 0.12);
-  const arms = [];
-  for (const s of [-1, 1]) {
-    const sh = new THREE.Group(); sh.position.set(0.25 * s, 0.46, 0); torso.add(sh);
-    mk(GEO.upper, OPM.shirt, sh, 0, -0.14, 0, 'body');
-    if (s === 1) mk(new THREE.CylinderGeometry(0.066, 0.066, 0.06, 10), team, sh, 0, -0.08, 0);
-    const el = new THREE.Group(); el.position.set(0, -0.28, 0); sh.add(el);
-    mk(GEO.fore, OPM.shirt, el, 0, -0.13, 0, 'body'); mk(GEO.hand, OPM.glove, el, 0, -0.28, 0);
-    arms.push({ sh, el });
-  }
-  // aim pose
-  arms[1].sh.rotation.set(-1.15, 0, 0.12); arms[1].el.rotation.set(-0.9, 0, 0);
-  arms[0].sh.rotation.set(-1.35, 0.0, -0.55); arms[0].el.rotation.set(-0.35, 0, 0);
-  const gun = new THREE.Group(); gun.position.set(0.05, 0.3, 0.3); torso.add(gun);
-  const gb = (w, h, d, x, y, z) => mk(new THREE.BoxGeometry(w, h, d), OPM.gun, gun, x, y, z);
-  gb(0.06, 0.09, 0.62, 0, 0, 0); gb(0.04, 0.16, 0.07, 0, -0.1, 0.06); gb(0.045, 0.1, 0.05, 0, -0.08, -0.16); gb(0.05, 0.08, 0.2, 0, -0.01, -0.36);
-  mk(new THREE.CylinderGeometry(0.015, 0.015, 0.18, 8).rotateX(Math.PI / 2), OPM.gun, gun, 0, 0.01, 0.4);
-  g.traverse(o => { if (o.isMesh) o.userData.op = true; });
-  return { g, hipsG, legs, torso, arms, gun, hit, team, muzzleLocal: new V3(0, 0.01, 0.5) };
-}
-function poseOperator(op, { phase = 0, amp = 0, crouch = 0, pitch = 0 }) {
-  const c = crouch;
-  op.hipsG.position.y = -0.38 * c;
-  for (let i = 0; i < 2; i++) {
-    const s = i ? 1 : -1, ph = phase + (i ? Math.PI : 0);
-    op.legs[i].hip.rotation.x = -Math.sin(ph) * 0.55 * amp - 1.15 * c;
-    op.legs[i].knee.rotation.x = Math.max(0, Math.sin(ph + 1.3)) * 0.85 * amp + 1.75 * c;
-  }
-  op.torso.rotation.x = -clamp(pitch, -1.2, 1.2) * 0.75 + 0.2 * c;
-}
-
 // ======================================================= PLAYER
 const P = {
   pos: new V3(), vel: new V3(), yaw: 0, pitch: 0, onGround: true, crouch: 0, crouching: false, alive: true, hp: 100,
-  weapon: 0, prevWeapon: 1, ammo: WEAPONS.map(w => ({ mag: w.mag, reserve: w.reserve })), fireCD: 0, reloadT: 0, switchT: 0,
-  ads: 0, adsHeld: false, recoilP: 0, kick: 0, bobPhase: 0, bobAmt: 0, sprint: 0, swayX: 0, swayY: 0, fallV: 0, stepAcc: 0, lastShot: 0,
-  shots: 0, hits: 0, deadT: 0, killer: null
+  weapon: 0, prevWeapon: 1, ammo: WEAPONS.map(w => ({ mag: w.mag, reserve: w.reserve })), fireCD: 0, reloadT: 0, switchT: 0, rl: null,
+  ads: 0, adsHeld: false, kick: 0, bobPhase: 0, bobAmt: 0, sprint: 0, swayX: 0, swayY: 0, fallV: 0, stepAcc: 0, lastShot: 0,
+  recP: new Spring(140, 0.85), recY: new Spring(120, 0.9), climb: 0, drift: 0, driftBias: 0, tracerN: 2, slideKick: 0,
+  shots: 0, hits: 0, deadT: 0, killer: null, rope: null, team: -1, minVy: 0
 };
 const keys = {};
 let mouseDown = false, locked = false, wantLock = false, gameState = 'menu'; // menu | play
 const eye = () => new V3(P.pos.x, P.pos.y + 1.62 - 0.55 * P.crouch, P.pos.z);
+const aimPitch = () => P.pitch + P.recP.x, aimYaw = () => P.yaw + P.recY.x;
 
 function respawnLocal(s) {
   const sp = SPAWNS[s] || SPAWNS[0];
   P.pos.set(sp[0], 0, sp[1]); P.vel.set(0, 0, 0);
-  P.yaw = Math.atan2(sp[0], sp[1]); // face toward map centre
-  P.pitch = 0; P.alive = true; P.hp = 100; P.crouching = false; P.crouch = 0; P.reloadT = 0; P.switchT = 0;
+  P.yaw = Math.atan2(sp[0], sp[1] - 7); // face toward map centre
+  P.pitch = 0; P.alive = true; P.hp = 100; P.crouching = false; P.crouch = 0; P.reloadT = 0; P.switchT = 0; P.rope = null; P.climb = 0;
+  P.recP.x = P.recP.v = P.recY.x = P.recY.v = 0;
   P.ammo = WEAPONS.map(w => ({ mag: w.mag, reserve: w.reserve }));
   setWeapon(0, true); hideBanner();
 }
@@ -1004,78 +1155,93 @@ function respawnLocal(s) {
 function setWeapon(i, instant = false) {
   if (i === P.weapon && !instant) return;
   if (i !== P.weapon) P.prevWeapon = P.weapon;
-  P.weapon = i; P.reloadT = 0; P.switchT = instant ? 0 : 0.35;
-  viewmodels.forEach((v, k) => v.root.visible = k === i);
+  P.weapon = i; P.reloadT = 0; P.rl = null; P.switchT = instant ? 0 : 0.35;
+  viewmodels.forEach((v, k) => { v.root.visible = k === i && !P.rope; v.mag.visible = true; v.mag.position.copy(v.magBase); });
+  if (!instant) SFX.mech('pouch');
   updateSlotsHUD();
 }
 
 function startReload() {
   const w = WEAPONS[P.weapon], a = P.ammo[P.weapon];
-  if (P.reloadT > 0 || a.mag >= w.mag || a.reserve <= 0 || P.switchT > 0) return;
-  P.reloadT = w.reload; SFX.reload(0); setTimeout(() => SFX.reload(1), w.reload * 600);
+  if (P.reloadT > 0 || a.mag >= w.mag || a.reserve <= 0 || P.switchT > 0 || P.rope) return;
+  const empty = a.mag === 0, j = () => R(-0.025, 0.025);
+  const dur = (empty ? w.reloadEmpty : w.reload) * R(0.93, 1.07);
+  P.rl = { dur, empty, bolt: Math.random() < 0.5, k: { out: 0.2 + j(), pouch: 0.36 + j(), back: 0.52 + j(), seat: 0.63 + j(), slap: 0.68 + j(), ch: 0.76 + j(), chEnd: 0.84 + j() },
+    done: {}, tilt: R(0.42, 0.64), dip: R(0.03, 0.06), roll: R(-0.12, 0.12), lift: R(-0.02, 0.02) };
+  if (!empty) { P.rl.k.slap = Math.min(0.8, P.rl.k.slap + 0.04); }
+  P.reloadT = dur; P.driftBias = R(-0.35, 0.35);
 }
 function finishReload() {
   const w = WEAPONS[P.weapon], a = P.ammo[P.weapon];
-  const need = w.mag - a.mag, take = Math.min(need, a.reserve); a.mag += take; a.reserve -= take;
+  const need = w.mag - a.mag, take = Math.min(need, a.reserve); a.mag += take; a.reserve -= take; P.rl = null;
 }
 
 const raycaster = new THREE.Raycaster();
 function fire() {
   const w = WEAPONS[P.weapon], a = P.ammo[P.weapon];
   if (a.mag <= 0) { SFX.click(); P.fireCD = 0.25; startReload(); return; }
-  a.mag--; P.shots++; P.fireCD = 60 / w.rpm; P.lastShot = performance.now();
+  const now = performance.now(), first = now - P.lastShot > 280;
+  a.mag--; P.shots++; P.fireCD = (P.fireCD < -0.04 ? 0 : P.fireCD) + 60 / w.rpm * R(0.97, 1.035); P.lastShot = now;
   const speed = Math.hypot(P.vel.x, P.vel.z);
   let spread = lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : 3) * (P.crouch > 0.5 ? 0.75 : 1);
   if (w.scope && P.ads < 0.9) spread = w.hip * (1 + speed * 0.25);
   spread += P.kick * 0.02;
   const o = eye();
-  const dir = new V3(0, 0, -1).applyEuler(new THREE.Euler(P.pitch, P.yaw, 0, 'YXZ'));
+  const dir = new V3(0, 0, -1).applyEuler(new THREE.Euler(aimPitch(), aimYaw(), 0, 'YXZ'));
   const rr = Math.sqrt(Math.random()) * spread, ra = Math.random() * Math.PI * 2;
   const right = new V3(Math.cos(P.yaw), 0, -Math.sin(P.yaw)), up = new V3().crossVectors(right, dir);
   dir.addScaledVector(right, Math.cos(ra) * rr).addScaledVector(up, Math.sin(ra) * rr).normalize();
 
   const hw = rayWorld(o, dir, w.range);
   let far = hw ? hw.t : w.range, hitP = null, endP;
-  // players / targets
   raycaster.set(o, dir); raycaster.far = far;
   const cands = [];
   for (const rp of remotes.values()) if (rp.alive) cands.push(...rp.op.hit);
-  for (const t of targets) if (t.up) cands.push(...t.hit);
+  for (const t of targets) if (t.up && t.pivot.visible) cands.push(...t.hit);
   const hits = raycaster.intersectObjects(cands, false);
   if (hits.length) {
     const h = hits[0]; hitP = h.point; endP = h.point.clone();
     const part = h.object.userData.part; const head = part === 'head';
-    const dmg = Math.round(w.dmg * (head ? w.head : part === 'leg' ? 0.8 : 1));
-    const owner = h.object.userData.owner;
-    bloodPuff(h.point, dir.clone().negate());
-    if (owner && owner.kind === 'target') { hitTarget(owner, head); showHit(head ? 'head' : 'hit'); }
-    else if (owner) { netSend({ t: 'hit', target: owner.id, dmg, head, w: P.weapon }); showHit(head ? 'head' : 'hit'); }
-    P.hits++;
+    const dmg = Math.round(w.dmg * (head ? w.head : part === 'leg' ? 0.8 : 1) * R(0.95, 1.05));
+    let owner = h.object.userData.owner;
+    if (!owner) { let p = h.object; while (p && !p.userData.owner) p = p.parent; owner = p && p.userData.owner; }
+    if (owner && owner.kind === 'target') { bloodPuff(h.point, dir.clone().negate()); hitTarget(owner, head); showHit(head ? 'head' : 'hit'); }
+    else if (owner && !isFriend(owner.id)) { bloodPuff(h.point, dir.clone().negate()); netSend({ t: 'hit', target: owner.id, dmg, head, w: P.weapon }); showHit(head ? 'head' : 'hit'); P.hits++; }
   } else if (hw) {
     endP = o.clone().addScaledVector(dir, hw.t);
     impact(endP, hw.n, hw.water);
   } else endP = o.clone().addScaledVector(dir, w.range);
 
-  // visuals
+  // visuals: every shot a little different
   const vm = viewmodels[P.weapon];
-  vm.flash.visible = true; vm.flash.rotation.z = Math.random() * 6; const fs = P.weapon === 2 ? 0.09 : 0.14; vm.flash.scale.set(fs, fs, fs); vm._flashT = 0.045;
-  wFlash.position.copy(vm.muzzle).applyMatrix4(vm.root.matrix); wFlash.intensity = 3;
-  worldFlash(o.clone().addScaledVector(dir, 0.8), 40);
+  vm.flash.visible = true; vm.flash.rotation.z = Math.random() * 6; const fs = (P.weapon === 2 ? 0.09 : 0.14) * R(0.75, 1.3); vm.flash.scale.set(fs, fs * R(0.85, 1.15), fs); vm._flashT = R(0.03, 0.055);
+  wFlash.position.copy(vm.muzzle).applyMatrix4(vm.root.matrix); wFlash.intensity = R(2.2, 3.8);
+  worldFlash(o.clone().addScaledVector(dir, 0.8), R(30, 50));
   const muzzleWorld = o.clone().addScaledVector(dir, 0.7).addScaledVector(right, P.ads > 0.5 ? 0 : 0.12).add(new V3(0, -0.08, 0));
-  if (P.shots % 2 === 0 || P.weapon === 1) tracer(muzzleWorld, endP);
-  smoke.spawn(muzzleWorld, dir.clone().multiplyScalar(0.6).add(new V3(0, 0.3, 0)), 0.6, 0.06, new THREE.Color(0x8a8580), -0.3, false, 2); smoke.p[smoke.p.length - 1].grow = true;
-  // casing
-  const c = casings[casingIdx++ % casings.length]; c.m.visible = true; c.m.position.copy(vm.eject).applyMatrix4(vm.root.matrix); c.v.set(R(0.9, 1.4), R(0.9, 1.4), R(-0.1, 0.25)); c.t = 0.7; c.spin.set(R(10, 30), R(10, 30), 0);
-  // recoil
-  const rk = w.recoil * (P.ads > 0.5 ? 0.65 : 1) * (P.crouch > 0.5 ? 0.8 : 1);
-  P.pitch += rk; P.recoilP += rk; P.yaw += (Math.random() - 0.5) * w.recoilH * 2; P.kick = Math.min(1.5, P.kick + 1);
-  SFX.shot(P.weapon, null);
+  if (--P.tracerN <= 0 || P.weapon === 1) { tracer(muzzleWorld, endP); P.tracerN = 2 + (Math.random() < 0.4 ? 1 : 0); }
+  if (Math.random() < 0.8) { smoke.spawn(muzzleWorld, dir.clone().multiplyScalar(R(0.3, 0.9)).add(new V3(R(-0.1, 0.1), R(0.15, 0.4), 0)), R(0.45, 0.8), R(0.04, 0.08), new THREE.Color(0x8a8580), -0.3, false, 2); smoke.p[smoke.p.length - 1].grow = true; }
+  const c = casings[casingIdx++ % casings.length]; c.m.visible = true; c.m.position.copy(vm.eject).applyMatrix4(vm.root.matrix); c.v.set(R(0.7, 1.6), R(0.7, 1.5), R(-0.25, 0.3)); c.t = 0.7; c.spin.set(R(8, 34), R(8, 34), R(-5, 5));
+  if (Math.random() < 0.75) setTimeout(() => SFX.tinkle(), R(420, 820));
+  // recoil: random strength, drifting side kick, bigger first shot, smaller crouched/aimed
+  const stance = (P.ads > 0.5 ? 0.68 : 1) * (P.crouch > 0.5 ? 0.8 : 1);
+  const kv = w.kickV * R(0.78, 1.22) * (first ? w.first : 1) * stance;
+  P.drift = clamp(P.drift * 0.85 + R(-0.55, 0.55) + P.driftBias * 0.3, -1.2, 1.2);
+  const kh = w.kickH * (P.drift * w.drift + R(-1, 1) * (1 - w.drift)) * stance;
+  P.recP.v += kv * 34; P.recY.v += kh * 34; P.climb += kv * 0.3;
+  P.kick = Math.min(1.5, P.kick + 1);
+  const vk = w.vk, vs = P.ads > 0.5 ? 0.55 : 1;
+  VMS.z.v += vk.z * R(0.85, 1.2) * vs; VMS.rx.v += vk.rx * R(0.8, 1.2) * vs; VMS.rz.v += vk.rz * R(-1, 1) * vs; VMS.x.v += vk.x * R(-1, 1) * vs; VMS.y.v += 0.25 * R(0.5, 1.2) * vs;
+  if (vm.pistol) P.slideKick = 1;
+  SFX.shot(P.weapon, null, { indoor: indoorAt(P.pos) });
   netSend({ t: 'shot', o: [muzzleWorld.x, muzzleWorld.y, muzzleWorld.z], e: [endP.x, endP.y, endP.z], w: P.weapon, n: hw && !hitP ? hw.n : null, wt: !!(hw && hw.water && !hitP) });
+  noiseForBots(P.pos, myId);
 }
+const indoorAt = p => ceilingAt(p.x, p.z, 0.1, p.y + 1.9) < 50;
 
 function updatePlayer(dt) {
   if (!P.alive) return;
   const w = WEAPONS[P.weapon];
+  if (P.rope) { updateRopeRider(dt); return; }
   // input direction
   let fx = 0, fz = 0;
   if (keys.KeyW) fz -= 1; if (keys.KeyS) fz += 1; if (keys.KeyA) fx -= 1; if (keys.KeyD) fx += 1;
@@ -1100,10 +1266,15 @@ function updatePlayer(dt) {
   if (P.pos.y + headH > ceil && P.vel.y > 0) { P.pos.y = ceil - headH; P.vel.y = 0; }
   const g = groundAt(P.pos.x, P.pos.z, 0.36, P.pos.y);
   const wasAir = !P.onGround;
-  if (P.pos.y <= g) { if (wasAir && P.vel.y < -6) SFX.land(); P.pos.y = g; P.vel.y = 0; P.onGround = true; }
+  if (!P.onGround) P.minVy = Math.min(P.minVy, P.vel.y);
+  if (P.pos.y <= g) {
+    if (wasAir && P.minVy < -6) SFX.land();
+    if (wasAir && P.minVy < -11.5) { const dmg = Math.round((-P.minVy - 11.5) * 9); if (dmg > 0) netSend({ t: 'fall', dmg }); }
+    P.pos.y = g; P.vel.y = 0; P.onGround = true; P.minVy = 0;
+  }
   else if (P.pos.y - g > 0.05 && P.vel.y <= 0 && P.onGround && P.pos.y - g < STEP) { P.pos.y = g; }
   else if (P.pos.y > g + 0.02) P.onGround = false;
-  P.pos.x = clamp(P.pos.x, -31.6, 31.6); P.pos.z = clamp(P.pos.z, -23.8, 23.6);
+  P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4);
 
   // crouch (stand only if room)
   let target = P.crouching ? 1 : 0;
@@ -1114,20 +1285,21 @@ function updatePlayer(dt) {
   const hs = Math.hypot(P.vel.x, P.vel.z);
   P.bobAmt = lerp(P.bobAmt, P.onGround ? Math.min(1, hs / 4.4) : 0, Math.min(1, dt * 8));
   P.bobPhase += hs * dt * 1.9;
-  P.stepAcc += hs * dt; if (P.onGround && P.stepAcc > (sprinting ? 2.1 : 1.6)) { P.stepAcc = 0; if (!P.crouching) SFX.step(null, sprinting ? 1.2 : 0.8); }
+  P.stepAcc += hs * dt; if (P.onGround && P.stepAcc > (sprinting ? 2.1 : 1.6) * R(0.92, 1.08)) { P.stepAcc = 0; if (!P.crouching) SFX.step(null, sprinting ? 1.2 : 0.8); }
 
   // aim
   P.ads = lerp(P.ads, P.adsHeld && !sprinting && P.reloadT <= 0 && P.switchT <= 0 ? 1 : 0, Math.min(1, dt * (w.scope ? 9 : 12)));
   // timers
   P.fireCD -= dt;
   if (P.switchT > 0) P.switchT -= dt;
-  if (P.reloadT > 0) { P.reloadT -= dt; if (P.reloadT <= 0) finishReload(); }
+  if (P.reloadT > 0) { P.reloadT -= dt; reloadEvents(); if (P.reloadT <= 0) finishReload(); }
   if (mouseDown && P.fireCD <= 0 && P.reloadT <= 0 && P.switchT <= 0 && P.sprint < 0.4) {
     fire(); if (!w.auto) mouseDown = false;
   }
   if (P.ammo[P.weapon].mag === 0 && P.reloadT <= 0 && P.fireCD <= -0.1 && !mouseDown) startReload();
-  // recoil recovery
-  const rec = P.recoilP * Math.min(1, dt * 5); P.pitch -= rec; P.recoilP -= rec;
+  // recoil: springs settle, part of the climb stays (pull down to compensate)
+  P.recP.step(dt); P.recY.step(dt);
+  const cl = P.climb * Math.min(1, dt * 16); P.pitch += cl; P.climb -= cl;
   P.kick = Math.max(0, P.kick - dt * 6);
   P.pitch = clamp(P.pitch, -1.5, 1.5);
 
@@ -1139,6 +1311,37 @@ function updatePlayer(dt) {
       if (needs) { P.ammo.forEach((a, i) => a.reserve = WEAPONS[i].reserve); c.cool = 15; SFX.ammo(); showPrompt('Ammo restocked'); }
     }
   }
+  ropeGrabCheck();
+}
+function reloadEvents() { // sounds and the falling magazine, at jittered moments of the reload
+  const rl = P.rl; if (!rl) return;
+  const k = 1 - P.reloadT / rl.dur, K = rl.k, vm = viewmodels[P.weapon], once = (n, f) => { if (!rl.done[n] && k >= K[n]) { rl.done[n] = 1; f(); } };
+  once('out', () => {
+    SFX.mech('magout');
+    if (rl.empty) { vm.dropMag.visible = true; vm.dropMag.position.copy(vm.mag.position).applyMatrix4(vm.root.matrix); vm.dropMag.quaternion.copy(vm.root.quaternion); vm.dropV.set(R(-0.1, 0.1), R(-0.6, -0.2), R(-0.1, 0.1)); vm.dropT = 0.7; setTimeout(() => SFX.mech('drop'), R(380, 560)); }
+  });
+  once('pouch', () => SFX.mech('pouch'));
+  once('seat', () => SFX.mech('magin'));
+  once('slap', () => { SFX.mech(vm.pistol && rl.empty ? 'slide' : 'slap'); VMS.y.v += R(0.5, 0.8); VMS.rx.v += R(-1.2, -0.6); if (vm.pistol) rl.slideFree = true; });
+  if (rl.empty && !vm.pistol) once(rl.bolt ? 'slap' : 'ch', () => { setTimeout(() => SFX.mech('charge'), rl.bolt ? 90 : 0); VMS.z.v += 0.5; });
+}
+function reloadPose(vm, k, out) { // gun tilt, support hand path, mag and charging-handle positions
+  const rl = P.rl, K = rl.k, e = rl.empty, rifleCharge = e && !vm.pistol && !rl.bolt;
+  const endK = rifleCharge ? K.chEnd + 0.06 : K.slap + 0.12;
+  const tilt = smoothK(k / 0.14) * (1 - smoothK((k - endK) / 0.12));
+  if (vm.pistol) { out.rz -= rl.tilt * 0.6 * tilt; out.ry += 0.35 * tilt; out.rx += 0.25 * tilt; }
+  else { out.rz += rl.tilt * tilt; out.rx -= (0.32 + rl.roll) * tilt; }
+  out.y -= rl.dip * tilt; out.x += rl.lift * tilt;
+  const Mw = vm.magBase.clone().add(new V3(0, vm.pistol ? -0.03 : -0.08, 0)), pouch = new V3(-0.14, -0.45, vm.pistol ? 0.15 : 0.02), low = Mw.clone().add(new V3(-0.02, -0.12, 0.02));
+  const path = [[0, vm.lhBase], [K.out - 0.05, Mw], [K.out, Mw], [K.pouch, pouch], [K.back, low], [K.seat, Mw], [K.slap - 0.015, Mw], [K.slap + 0.02, Mw.clone().add(new V3(0, -0.03, 0))]];
+  if (rifleCharge) { const C = vm.ch.position.clone().add(new V3(0, 0.03, 0.02)); path.push([K.ch - 0.02, C], [K.chEnd, C.clone().add(new V3(0, 0, vm.chPull))], [K.chEnd + 0.03, C], [endK + 0.1, vm.lhBase]); }
+  else path.push([endK + 0.08, vm.lhBase]);
+  const hand = along(k, path); vm.lh.position.copy(hand);
+  // magazine: in the well, in the hand, or gone (dropped)
+  const held = k >= K.out && k < K.seat;
+  vm.mag.visible = !(e && k >= K.out && k < K.pouch);
+  if (held) vm.mag.position.copy(hand).add(vm.magBase.clone().sub(Mw)); else vm.mag.position.copy(vm.magBase);
+  if (vm.ch) vm.ch.position.z = vm.chBase + (rifleCharge && k > K.ch && k < K.chEnd + 0.03 ? vm.chPull * smoothK((k - K.ch) / (K.chEnd - K.ch)) * (k > K.chEnd ? 0 : 1) : 0);
 }
 
 function updateCamera(dt, t) {
@@ -1157,7 +1360,8 @@ function updateCamera(dt, t) {
   e.y += Math.abs(Math.sin(P.bobPhase)) * 0.045 * bob - 0.02 * bob;
   e.x += Math.cos(P.bobPhase) * 0.02 * bob * Math.cos(P.yaw); e.z -= Math.cos(P.bobPhase) * 0.02 * bob * Math.sin(P.yaw);
   camera.position.copy(e);
-  camera.rotation.set(P.pitch, P.yaw, Math.cos(P.bobPhase) * 0.004 * bob);
+  for (const s of Object.values(VMS)) s.step(dt);
+  camera.rotation.set(aimPitch(), aimYaw(), Math.cos(P.bobPhase) * 0.004 * bob + VMS.rz.x * 0.04 + (P.rope ? Math.sin(t * 1.3) * 0.03 : 0));
   const fovT = lerp(lerp(75, 82, P.sprint), w.fov, P.ads);
   if (Math.abs(camera.fov - fovT) > 0.01) { camera.fov = fovT; camera.updateProjectionMatrix(); }
 
@@ -1166,78 +1370,118 @@ function updateCamera(dt, t) {
   const pos = vm.hip.clone().lerp(vm.ads, P.ads);
   const bobV = P.bobAmt * (1 - P.ads * 0.9);
   pos.x += Math.cos(P.bobPhase) * 0.012 * bobV; pos.y += -Math.abs(Math.sin(P.bobPhase)) * 0.012 * bobV;
-  pos.y += Math.sin(t * 1.6) * 0.0015 * (1 - P.ads);
+  // idle breathing sway, a slow figure-eight that is stronger when scoped in
+  const br = (1 - P.ads) * 0.0015 + P.ads * (w.scope ? 0.0009 : 0.0004);
+  pos.y += Math.sin(t * 1.6) * br; pos.x += Math.sin(t * 0.8) * br * 0.8;
   P.swayX = lerp(P.swayX, 0, Math.min(1, dt * 7)); P.swayY = lerp(P.swayY, 0, Math.min(1, dt * 7));
-  pos.x += P.swayX * (1 - P.ads * 0.8); pos.y += P.swayY * (1 - P.ads * 0.8);
-  pos.z += P.kick * 0.035;
+  pos.x += P.swayX * (1 - P.ads * 0.8) + VMS.x.x * 0.03; pos.y += P.swayY * (1 - P.ads * 0.8) + VMS.y.x * 0.03;
+  pos.z += VMS.z.x * 0.03;
   pos.x -= 0.06 * P.sprint; pos.y -= 0.04 * P.sprint;
-  let rx = P.kick * 0.06 * (1 - P.ads * 0.5), ry = 0.55 * P.sprint, rz = 0.35 * P.sprint;
-  if (P.reloadT > 0) { const k = 1 - P.reloadT / w.reload; const s = Math.sin(k * Math.PI); rx -= 0.45 * s; rz += 0.5 * s; pos.y -= 0.05 * s; vm.mag.position.y = (P.weapon === 2 ? -0.1 : P.weapon === 1 ? -0.06 : -0.08) - (k > 0.2 && k < 0.65 ? 0.3 : 0); }
-  else vm.mag.position.y = P.weapon === 2 ? -0.1 : P.weapon === 1 ? -0.06 : -0.08;
+  const o = { x: 0, y: 0, rx: VMS.rx.x * 0.03 * (1 - P.ads * 0.4), ry: 0.55 * P.sprint, rz: 0.35 * P.sprint + VMS.rz.x * 0.03 };
+  if (P.reloadT > 0 && P.rl) reloadPose(vm, 1 - P.reloadT / P.rl.dur, o);
+  else { vm.lh.position.copy(vm.lhBase); vm.mag.visible = true; vm.mag.position.copy(vm.magBase); if (vm.ch) vm.ch.position.z = vm.chBase; }
+  pos.x += o.x; pos.y += o.y;
   if (P.switchT > 0) pos.y -= (P.switchT / 0.35) * 0.3;
-  vm.root.position.copy(pos); vm.root.rotation.set(rx, ry, rz);
-  vm.root.visible = !(w.scope && P.ads > 0.82);
+  vm.root.position.copy(pos); vm.root.rotation.set(o.rx, o.ry, o.rz);
+  sleeveTo(vm.sleeve, vm.lh.position, vm.anchor);
+  if (vm.slide) { P.slideKick = Math.max(0, P.slideKick - dt * 28); const locked = P.ammo[2].mag === 0 && !(P.rl && P.rl.slideFree); vm.slide.position.z = locked ? 0.03 : 0.026 * Math.sin(Math.min(1, P.slideKick) * Math.PI * 0.5); }
+  vm.root.visible = !(w.scope && P.ads > 0.82) && !P.rope;
   wCam.fov = lerp(52, w.wfov, P.ads); wCam.updateProjectionMatrix();
   if (vm._flashT > 0) { vm._flashT -= dt; if (vm._flashT <= 0) vm.flash.visible = false; }
+  if (vm.dropT > 0) { vm.dropT -= dt; vm.dropV.y -= 6 * dt; vm.dropMag.position.addScaledVector(vm.dropV, dt); vm.dropMag.rotation.x += dt * 3; if (vm.dropT <= 0) vm.dropMag.visible = false; }
   wFlash.intensity = Math.max(0, wFlash.intensity - dt * 60);
   // sun direction into camera space
   const inv = camera.quaternion.clone().invert();
   wSun.position.copy(SUN_DIR).applyQuaternion(inv).multiplyScalar(5); wSun.target.position.set(0, 0, 0);
   // indoor dimming of viewmodel
-  const indoor = ceilingAt(P.pos.x, P.pos.z, 0.1, P.pos.y + 1.9) < 50;
+  const indoor = indoorAt(P.pos);
   wSun.intensity = lerp(wSun.intensity, indoor ? 0.35 : 2.2, Math.min(1, dt * 4));
   // casings
   for (const c of casings) { if (c.t <= 0) continue; c.t -= dt; c.v.y -= 9.8 * dt; c.m.position.addScaledVector(c.v, dt); c.m.rotation.x += c.spin.x * dt; c.m.rotation.y += c.spin.y * dt; if (c.t <= 0) c.m.visible = false; }
 }
+viewmodels.forEach(v => { if (v.ch) v.chBase = v.ch.position.z; });
 
-// ======================================================= REMOTE PLAYERS
+// ======================================================= OTHER COMBATANTS (players and bots)
 const remotes = new Map();
-const playerInfo = new Map(); // id -> {id,name,slot,kills,deaths,hp,alive}
+const playerInfo = new Map(); // id -> {id,name,slot,kills,deaths,hp,alive,bot,team,look}
+function bandColorFor(info) { return info.team >= 0 ? TEAM_COLORS[info.team] : info.bot ? 0x6b6a5c : SLOT_COLORS[info.slot] || 0x888888; }
 class Remote {
   constructor(info) {
-    this.id = info.id; this.kind = 'player'; this.op = makeOperator(info.slot); this.op.hit.forEach(m => m.userData.owner = this);
+    this.id = info.id; this.kind = 'player'; this.bot = !!info.bot; this.look = info.look; this.team = info.team;
+    this.op = makeOperator(info.look, bandColorFor(info)); this.op.g.userData.owner = this; this.op.hit.forEach(m => m.userData.owner = this);
     scene.add(this.op.g); this.snaps = []; this.alive = !!info.alive; this.op.g.visible = this.alive;
-    this.pos = new V3(); this.yaw = 0; this.pitch = 0; this.crouch = 0; this.phase = 0; this.stepAcc = 0; this.deadT = 0; this.fallDir = 1; this.lastPos = new V3();
+    this.pos = new V3(); this.vel = new V3(); this.yaw = 0; this.pitch = 0; this.crouch = 0; this.w = 0; this.flags = 0; this.stepAcc = 0; this.lastPos = new V3();
+    this.aimS = 1; this.reloadStart = -1; this.direct = null; this.tag = null; this.deadT = 0;
+  }
+  setInfo(info) {
+    this.team = info.team; this.op.band.color.setHex(bandColorFor(info)); this.op.band.emissive.setHex(bandColorFor(info));
+    const friend = info.team >= 0 && info.team === P.team && info.id !== myId;
+    if (friend && !this.tag) { this.tag = nameTag(info.name, TEAM_CSS[info.team]); scene.add(this.tag); }
+    if (!friend && this.tag) { scene.remove(this.tag); this.tag = null; }
   }
   push(m) {
     const now = performance.now();
-    this.snaps.push({ t: now, p: new V3(m.p[0], m.p[1], m.p[2]), y: m.y, pi: m.pi, c: m.c, w: m.w });
+    this.snaps.push({ t: now, p: new V3(m.p[0], m.p[1], m.p[2]), y: m.y, pi: m.pi, c: m.c, w: m.w, f: m.f | 0 });
     if (this.snaps.length > 30) this.snaps.shift();
   }
   update(dt) {
+    const op = this.op;
     if (!this.alive) {
-      this.deadT += dt; const f = Math.min(1, this.deadT / 0.6); const e = f * f * (3 - 2 * f);
-      this.op.g.rotation.x = this.fallDir * e * Math.PI / 2 * 0.95; this.op.g.position.y = this.pos.y + 0.14 * e;
-      if (this.deadT > 2.8) this.op.g.visible = false;
+      this.deadT += dt; poseOperator(op, { vf: 0, vs: 0, crouch: 0, pitch: 0, aim: 0, reload: -1, rope: 0, w: this.w, dt });
+      op.g.position.copy(this.pos);
+      if (this.deadT > 4) op.g.visible = false;
+      if (this.tag) this.tag.visible = false;
       return;
     }
-    const rt = performance.now() - 110;
-    const s = this.snaps; if (!s.length) return;
-    let a = s[0], b = s[s.length - 1];
-    for (let i = s.length - 1; i > 0; i--) if (s[i - 1].t <= rt) { a = s[i - 1]; b = s[i]; break; }
-    const k = b.t > a.t ? clamp((rt - a.t) / (b.t - a.t), 0, 1.2) : 1;
     this.lastPos.copy(this.pos);
-    this.pos.copy(a.p).lerp(b.p, k);
-    this.yaw = a.y + angDiff(a.y, b.y) * k; this.pitch = lerp(a.pi, b.pi, k); this.crouch = lerp(a.c, b.c, k);
-    const sp = dt > 0 ? Math.hypot(this.pos.x - this.lastPos.x, this.pos.z - this.lastPos.z) / dt : 0;
-    this.phase += sp * dt * 2.1;
-    this.op.g.position.copy(this.pos); this.op.g.rotation.set(0, this.yaw + Math.PI, 0);
-    poseOperator(this.op, { phase: this.phase, amp: Math.min(1, sp / 4), crouch: this.crouch, pitch: this.pitch });
-    this.stepAcc += sp * dt; if (this.stepAcc > 1.7 && this.crouch < 0.5 && sp > 2.5) { this.stepAcc = 0; SFX.step(this.pos, sp > 5.5 ? 1.4 : 1); }
+    if (this.direct) { const b = this.direct; this.pos.copy(b.pos); this.yaw = b.yaw; this.pitch = b.pitch; this.crouch = b.crouch; this.w = b.w; this.flags = b.flags; }
+    else {
+      const rt = performance.now() - 110;
+      const s = this.snaps; if (!s.length) { op.g.visible = false; return; }
+      let a = s[0], b = s[s.length - 1];
+      for (let i = s.length - 1; i > 0; i--) if (s[i - 1].t <= rt) { a = s[i - 1]; b = s[i]; break; }
+      const k = b.t > a.t ? clamp((rt - a.t) / (b.t - a.t), 0, 1.2) : 1;
+      this.pos.copy(a.p).lerp(b.p, k);
+      this.yaw = a.y + angDiff(a.y, b.y) * k; this.pitch = lerp(a.pi, b.pi, k); this.crouch = lerp(a.c, b.c, k); this.w = b.w | 0; this.flags = b.f;
+    }
+    if (dt > 0) this.vel.lerp(new V3((this.pos.x - this.lastPos.x) / dt, 0, (this.pos.z - this.lastPos.z) / dt), Math.min(1, dt * 10));
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const vf = -(this.vel.x * sy + this.vel.z * cy), vs = this.vel.x * cy - this.vel.z * sy;
+    const reloading = this.flags & 1, rope = this.flags & 2, sprint = this.flags & 4, aimed = this.flags & 8;
+    const wantAim = sprint ? 0 : this.bot ? (aimed ? 1 : 0.35) : 1;
+    this.aimS = lerp(this.aimS, wantAim, Math.min(1, dt * 6));
+    if (reloading && this.reloadStart < 0) this.reloadStart = performance.now();
+    if (!reloading) this.reloadStart = -1;
+    const rk = this.reloadStart >= 0 ? clamp((performance.now() - this.reloadStart) / 1000 / (WEAPONS[this.w] || WEAPONS[0]).reload, 0, 1) : -1;
+    op.g.visible = true; op.g.position.copy(this.pos); op.g.rotation.set(0, this.yaw + Math.PI, 0);
+    poseOperator(op, { vf, vs, crouch: this.crouch, pitch: this.pitch, aim: this.aimS, reload: rk, rope, w: this.w, dt });
+    const sp = Math.hypot(this.vel.x, this.vel.z);
+    this.stepAcc += sp * dt; if (this.stepAcc > 1.7 && this.crouch < 0.5 && sp > 2.5 && !rope) { this.stepAcc = 0; SFX.step(this.pos, sp > 5.5 ? 1.4 : 1); }
+    if (this.tag) { this.tag.visible = true; this.tag.position.set(this.pos.x, this.pos.y + 2.25 - 0.5 * this.crouch, this.pos.z); const d = this.tag.position.distanceTo(camera.position); const sc = clamp(d * 0.035, 0.35, 1.6); this.tag.scale.set(sc * 2.4, sc * 0.6, 1); }
   }
-  muzzle() { this.op.g.updateMatrixWorld(true); return this.op.muzzleLocal.clone().applyMatrix4(this.op.gun.matrixWorld); }
+  muzzle() { return muzzleWorld(this.op, new V3()); }
   die(killerPos) {
     this.alive = false; this.deadT = 0;
     const toK = killerPos ? killerPos.clone().sub(this.pos) : new V3(0, 0, 1);
     const fwd = new V3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    this.fallDir = fwd.dot(toK) > 0 ? -1 : 1;
+    killOperator(this.op, fwd.dot(toK) > 0 ? -1 : 1);
   }
+  hide() { this.alive = false; this.op.g.visible = false; if (this.tag) this.tag.visible = false; }
   respawn(s) {
-    const sp = SPAWNS[s]; this.alive = true; this.op.g.visible = true; this.op.g.rotation.x = 0; this.snaps = [];
-    const yaw = Math.atan2(sp[0], sp[1]); this.pos.set(sp[0], 0, sp[1]); this.push({ p: [sp[0], 0, sp[1]], y: yaw, pi: 0, c: 0, w: 0 });
+    const sp = SPAWNS[s]; this.alive = true; reviveOperator(this.op); this.snaps = [];
+    const yaw = Math.atan2(sp[0], sp[1] - 7); this.pos.set(sp[0], 0, sp[1]); this.lastPos.copy(this.pos); this.vel.set(0, 0, 0); this.push({ p: [sp[0], 0, sp[1]], y: yaw, pi: 0, c: 0, w: 0 });
   }
-  dispose() { scene.remove(this.op.g); }
+  dispose() { scene.remove(this.op.g); if (this.tag) scene.remove(this.tag); }
 }
+function nameTag(name, css) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64; const g = c.getContext('2d');
+  g.font = '600 30px "IBM Plex Mono", Menlo, monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(0,0,0,.55)'; g.fillText(name, 129, 25); g.fillStyle = css; g.fillText(name, 128, 24);
+  g.beginPath(); g.moveTo(116, 46); g.lineTo(140, 46); g.lineTo(128, 60); g.closePath(); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true })); s.renderOrder = 10; return s;
+}
+function isFriend(id) { const i = playerInfo.get(id); return !!(i && cfg.mode === 'team' && i.team >= 0 && i.team === P.team); }
 
 // ======================================================= PRACTICE TARGETS
 const targets = [];
@@ -1268,9 +1512,54 @@ function updateTargets(dt) {
 }
 
 // ======================================================= NETWORK
+const viaTunnel = /\.trycloudflare\.com$/i.test(location.hostname);
+const viaTunnelHost = () => viaTunnel;
+// 'ws': a Tidebreak server (host Mac, same Wi-Fi or join code). 'local': offline practice with the same match rules and bots.
 let webMode = false;
-let ws = null, online = false, myId = 0, killTarget = 10, matchOver = false, pingMs = 0, sendAcc = 0;
-function netSend(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+let ws = null, online = false, netMode = '', myId = 0, killTarget = 10, matchOver = false, pingMs = 0, sendAcc = 0, bsendAcc = 0;
+let isHost = false, botOwner = 0, teamKills = [0, 0], cfg = { mode: 'ffa', bots: 0, skill: 1 };
+const hostCfg = Object.assign({ mode: 'ffa', bots: 3, skill: 1 }, store.get('hostcfg', {}));
+let localMatch = null, localMe = null;
+const clone = m => JSON.parse(JSON.stringify(m));
+function netSend(m) {
+  if (netMode === 'ws') { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+  else if (netMode === 'local' && localMatch) localMatch.msg(localMe, clone(m));
+}
+// Host settings: the host (or anyone before joining on the host Mac / offline) picks mode, bots, skill.
+const SKILL_NAMES = ['Recruit', 'Regular', 'Veteran'];
+const cfgSegs = { mode: $('cfgmode'), bots: $('cfgbots'), skill: $('cfgskill') };
+function canEditCfg() {
+  if (netMode) return isHost;
+  if (webMode) { const st = P2P.status(); return !st || st.kind === 'host'; }
+  return location.protocol === 'file:' || /^(localhost|127\.)/.test(location.hostname) || !location.host;
+}
+function updateHostUI() {
+  const edit = canEditCfg(), c = netMode ? cfg : hostCfg;
+  for (const k in cfgSegs) for (const b of cfgSegs[k].children) {
+    b.setAttribute('aria-pressed', String(b.dataset.v) === String(c[k]));
+    b.disabled = !edit;
+  }
+  $('matchcfg').hidden = !edit && !netMode;
+  const info = $('cfginfo');
+  if (!edit && netMode) {
+    info.hidden = false;
+    info.innerHTML = `The host set this match: <b>${c.mode === 'team' ? 'Teams' : 'Free for all'}</b>, <b>${c.bots ? c.bots + ' bot' + (c.bots > 1 ? 's' : '') + ' (' + SKILL_NAMES[c.skill] + ')' : 'no bots'}</b>.`;
+  } else if (edit && netMode && !matchOver) { info.hidden = false; info.textContent = 'Changing a setting restarts the match for everyone.'; }
+  else info.hidden = true;
+  const t = $('tgt'); if (t) t.textContent = netMode ? killTarget : (c.mode === 'team' ? 20 : 10);
+}
+for (const k in cfgSegs) cfgSegs[k].addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  hostCfg[k] = k === 'mode' ? b.dataset.v : +b.dataset.v;
+  store.set('hostcfg', hostCfg);
+  if (netMode && isHost) netSend({ t: 'cfg', cfg: hostCfg });
+  updateHostUI();
+});
+function startLocal() {
+  localMatch = new Match({ killTarget: 10, maxHumans: 1 });
+  netMode = 'local'; online = true;
+  localMe = localMatch.join(settings.name || 'Operator', m => { const c = clone(m); setTimeout(() => onNet(c), 0); }, true, hostCfg);
+}
 function connect() {
   return new Promise(resolve => {
     const p2p = P2P.status();
@@ -1280,79 +1569,177 @@ function connect() {
     try { ws = p2p ? P2P.openSocket() : new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch (e) { return resolve(false); }
     const giveUp = () => { if (!done) { done = true; try { ws.close(); } catch (e) { } ws = null; resolve(false); } };
     let to = setTimeout(giveUp, /^(localhost|127\.)/.test(location.hostname) ? 5000 : 12000);
-    ws.onopen = () => { clearTimeout(to); to = setTimeout(giveUp, 20000); netSend({ t: 'hello', name: settings.name || 'Operator' }); };
+    ws.onopen = () => { clearTimeout(to); to = setTimeout(giveUp, 20000); ws.send(JSON.stringify({ t: 'hello', name: settings.name || 'Operator', cfg: hostCfg })); };
     ws.onmessage = ev => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (m.t === 'welcome' && !done) { done = true; clearTimeout(to); online = true; resolve(true); }
+      if (m.t === 'welcome' && !done) { done = true; clearTimeout(to); online = true; netMode = 'ws'; resolve(true); }
       if (m.t === 'full' && !done) { done = true; clearTimeout(to); resolve('full'); }
       onNet(m);
     };
-    ws.onclose = () => { if (!done) { done = true; clearTimeout(to); resolve(false); } else if (online) { online = false; showBanner('Connection lost', P2P.status() ? (P2P.status().kind === 'host' ? 'The link to the other player dropped. Reload to host a new match.' : 'The host closed their game or the connection dropped. Reload and join again with the host\'s new code.') : /trycloudflare\.com$/.test(location.hostname) ? 'The host closed Tidebreak or the internet link dropped. Reload to rejoin, or ask the host for the new join code.' : 'The host stopped the server or the Wi-Fi dropped. Reload the page to rejoin.'); } };
+    ws.onclose = () => { if (!done) { done = true; clearTimeout(to); resolve(false); } else if (online) { online = false; showBanner('Connection lost', P2P.status() ? (P2P.status().kind === 'host' ? 'The link to the other players dropped. Reload to host a new match.' : 'The host closed their game or the connection dropped. Reload and join again with the host\'s new code.') : /trycloudflare\.com$/.test(location.hostname) ? 'The host closed Tidebreak or the internet link dropped. Reload to rejoin, or ask the host for the new join code.' : 'The host stopped the server or the Wi-Fi dropped. Reload the page to rejoin.'); } };
     ws.onerror = () => { };
   });
 }
 function nameOf(id) { if (id === myId) return settings.name || 'You'; const p = playerInfo.get(id); return p ? p.name : 'Operator'; }
-function colorOf(id) { const p = playerInfo.get(id); return p ? SLOT_CSS[p.slot] : '#fff'; }
+function colorOf(id) { const p = playerInfo.get(id); return p ? (p.team >= 0 ? TEAM_CSS[p.team] : p.bot ? '#d8d2c4' : SLOT_CSS[p.slot]) : '#fff'; }
 function applyScores(list) { for (const s of list) { const p = playerInfo.get(s.id); if (p) Object.assign(p, s); else playerInfo.set(s.id, { ...s }); } renderScore(); }
+
+// ---- bots: simulated by one browser (the host's when connected), seen by everyone else like players
+const bots = new Map();
+const botCtx = {
+  weapons: WEAPONS, nav: null, bots: [], now: () => performance.now() / 1000,
+  los: (a, b) => !losBlocked(a, b), collide: collideCircle, groundAt,
+  clampPos: p => { p.x = clamp(p.x, MAP.x0 + 0.5, MAP.x1 - 0.5); p.z = clamp(p.z, MAP.z0 + 0.4, MAP.z1 - 0.5); },
+  pickGoal: () => hideSpots.length && Math.random() < 0.75 ? hideSpots[Math.floor(Math.random() * hideSpots.length)].clone().add(new V3(R(-0.8, 0.8), 0, R(-0.8, 0.8))) : botCtx.nav.randomOpen()
+};
+function combatants() {
+  const list = [];
+  if (online && P.alive) list.push({ id: myId, pos: P.pos, crouch: P.crouch, alive: true, team: P.team, vel: P.vel });
+  for (const r of remotes.values()) if (r.alive) list.push({ id: r.id, pos: r.pos, crouch: r.crouch, alive: true, team: r.team, vel: r.vel });
+  return list;
+}
+function noiseForBots(pos, fromId) {
+  const from = playerInfo.get(fromId);
+  for (const b of bots.values()) if (b.id !== fromId && !(cfg.mode === 'team' && from && from.team === b.team)) b.hear(pos, fromId);
+}
+function nearMiss(a, e) {
+  const myE = eye(); const seg = e.clone().sub(a); const L = seg.length(); if (L < 0.01) return; seg.divideScalar(L);
+  const proj = clamp(myE.clone().sub(a).dot(seg), 0, L); const close = a.clone().addScaledVector(seg, proj).distanceTo(myE);
+  if (close < 1.5 && P.alive && proj > 1) SFX.crack(a.clone().addScaledVector(seg, proj));
+}
+function botShot(b, ev, r, list) {
+  const W = WEAPONS[ev.w];
+  const hw = rayWorld(ev.o, ev.dir, W.range), far = hw ? hw.t : W.range;
+  const hc = rayCombatants(ev.o, ev.dir, far, list, b.id);
+  let endP;
+  if (hc) {
+    endP = ev.o.clone().addScaledVector(ev.dir, hc.t);
+    if (!(cfg.mode === 'team' && hc.c.team === b.team)) {
+      const dmg = Math.round(W.dmg * (hc.part === 'head' ? W.head : hc.part === 'leg' ? 0.8 : 1) * R(0.92, 1.05));
+      netSend({ t: 'hit', as: b.id, target: hc.c.id, dmg, head: hc.part === 'head', w: ev.w });
+      if (hc.c.id !== myId) bloodPuff(endP, ev.dir.clone().negate());
+    }
+  } else if (hw) { endP = ev.o.clone().addScaledVector(ev.dir, hw.t); impact(endP, hw.n, hw.water); }
+  else endP = ev.o.clone().addScaledVector(ev.dir, W.range);
+  const mz = r ? r.muzzle() : ev.o;
+  if (r) r.op.recoil = 1;
+  if (Math.random() < 0.45 || ev.w === 1) tracer(mz, endP);
+  worldFlash(mz, 40); SFX.shot(ev.w, mz, { supp: !!(r && lookFor(r.look).gun.supp && ev.w !== 2), indoor: indoorAt(b.pos) });
+  netSend({ t: 'shot', as: b.id, o: [mz.x, mz.y, mz.z], e: [endP.x, endP.y, endP.z], w: ev.w, n: hw && !hc ? hw.n : null, wt: !!(hw && hw.water && !hc) });
+  noiseForBots(b.pos, b.id); nearMiss(mz, endP);
+}
+function updateBots(dt) {
+  if (botOwner !== myId || !bots.size) return;
+  botCtx.bots = [...bots.values()];
+  const list = combatants();
+  for (const b of botCtx.bots) {
+    const ev = b.update(dt, list, cfg.skill);
+    if (ev && ev.type === 'shot') botShot(b, ev, remotes.get(b.id), list);
+  }
+  bsendAcc += dt;
+  if (bsendAcc >= 0.066) { bsendAcc = 0; const live = botCtx.bots.filter(b => b.alive); if (live.length) netSend({ t: 'bstate', b: live.map(b => [b.id, +b.pos.x.toFixed(2), +b.pos.y.toFixed(2), +b.pos.z.toFixed(2), +b.yaw.toFixed(3), +b.pitch.toFixed(3), +b.crouch.toFixed(2), b.w, b.flags]) }); }
+}
+function applyRoster(m) {
+  if (m.cfg) cfg = m.cfg; if (m.target) killTarget = m.target; botOwner = m.owner || 0; if (m.teams) teamKills = m.teams;
+  const ids = new Set(m.players.map(p => p.id));
+  for (const id of [...playerInfo.keys()]) if (!ids.has(id)) { playerInfo.delete(id); const r = remotes.get(id); if (r) { r.dispose(); remotes.delete(id); } bots.delete(id); }
+  const me = m.players.find(p => p.id === myId); if (me) P.team = me.team;
+  for (const p of m.players) {
+    playerInfo.set(p.id, { ...p });
+    if (p.id === myId) continue;
+    let r = remotes.get(p.id);
+    if (r && r.look !== p.look) { r.dispose(); remotes.delete(p.id); r = null; }
+    if (!r) { r = new Remote(p); remotes.set(p.id, r); }
+  }
+  for (const [id, r] of remotes) r.setInfo(playerInfo.get(id));
+  if (botOwner === myId) {
+    for (const p of m.players) if (p.bot) {
+      let b = bots.get(p.id); const r = remotes.get(p.id);
+      if (!b) { b = new Bot(p.id, p.look, botCtx); bots.set(p.id, b); if (r && r.alive && p.alive && r.snaps.length) { b.pos.copy(r.pos); b.yaw = r.yaw; b.alive = true; b.mag = WEAPONS[b.w].mag; } }
+      b.team = p.team; if (r) r.direct = b;
+    }
+  } else {
+    for (const id of bots.keys()) { const r = remotes.get(id); if (r) { r.direct = null; r.snaps = []; r.push({ p: [r.pos.x, r.pos.y, r.pos.z], y: r.yaw, pi: r.pitch, c: r.crouch, w: r.w }); } }
+    bots.clear();
+  }
+  targets.forEach(t => t.pivot.visible = netMode === 'local' && cfg.bots === 0);
+  renderScore(); updateHostUI();
+}
 function onNet(m) {
   switch (m.t) {
     case 'welcome':
-      myId = m.you; killTarget = m.target; matchOver = m.over;
-      for (const p of m.players) { playerInfo.set(p.id, { ...p }); if (p.id !== myId) remotes.set(p.id, new Remote(p)); }
-      renderScore(); break;
-    case 'join': playerInfo.set(m.p.id, { ...m.p }); remotes.set(m.p.id, new Remote(m.p)); feed(`<b style="color:${SLOT_CSS[m.p.slot]}">${esc(m.p.name)}</b> joined`); renderScore(); break;
-    case 'leave': { const r = remotes.get(m.id); if (r) r.dispose(); remotes.delete(m.id); feed(`${esc(nameOf(m.id))} left`); playerInfo.delete(m.id); renderScore(); break; }
-    case 'spawn':
+      myId = m.you; isHost = !!m.host; matchOver = m.over;
+      applyRoster(m); if (m.rope) startRopeHeli(m.rope);
+      break;
+    case 'roster': applyRoster(m); if (m.joined) { const p = playerInfo.get(m.joined); if (p) feed(`<b style="color:${colorOf(p.id)}">${esc(p.name)}</b> joined`); } break;
+    case 'leave': { const r = remotes.get(m.id); feed(`${esc(nameOf(m.id))} left`); if (r) r.dispose(); remotes.delete(m.id); playerInfo.delete(m.id); bots.delete(m.id); renderScore(); break; }
+    case 'gone':
+      if (m.id === myId) { P.alive = false; P.deadT = 0; P.killer = null; P.rope = null; viewmodels.forEach(v => v.root.visible = false); showBanner('Switching teams', 'Respawning', 1500); }
+      else { const r = remotes.get(m.id); if (r) r.hide(); const b = bots.get(m.id); if (b) b.alive = false; }
+      break;
+    case 'spawn': {
       if (m.id === myId) respawnLocal(m.s); else { const r = remotes.get(m.id); if (r) r.respawn(m.s); }
-      { const p = playerInfo.get(m.id); if (p) { p.alive = true; p.hp = 100; } } break;
-    case 'state': { const r = remotes.get(m.id); if (r) r.push(m); break; }
+      const b = bots.get(m.id); if (b) b.spawn(SPAWNS[m.s][0], SPAWNS[m.s][1]);
+      const p = playerInfo.get(m.id); if (p) { p.alive = true; p.hp = 100; } break;
+    }
+    case 'state': { const r = remotes.get(m.id); if (r && !r.direct) r.push(m); break; }
+    case 'bstate': for (const e of m.b) { const r = remotes.get(e[0]); if (r && !r.direct) r.push({ p: [e[1], e[2], e[3]], y: e[4], pi: e[5], c: e[6], w: e[7], f: e[8] }); } break;
     case 'shot': {
       const r = remotes.get(m.id); const o = new V3(...m.o), e = new V3(...m.e);
       const mz = r && r.alive ? r.muzzle() : o;
-      tracer(mz, e); worldFlash(mz, 50); SFX.shot(m.w, mz);
+      if (r) r.op.recoil = 1;
+      if (Math.random() < 0.55 || m.w === 1) tracer(mz, e);
+      worldFlash(mz, 50); SFX.shot(m.w, mz, { supp: !!(r && lookFor(r.look).gun.supp && m.w !== 2), indoor: indoorAt(mz) });
       if (m.n) impact(e, m.n, m.wt);
-      // near-miss crack
-      const myE = eye(); const seg = e.clone().sub(mz); const L = seg.length(); seg.divideScalar(L);
-      const proj = clamp(myE.clone().sub(mz).dot(seg), 0, L); const close = mz.clone().addScaledVector(seg, proj).distanceTo(myE);
-      if (close < 1.5 && P.alive) SFX.crack(mz);
+      nearMiss(mz, e); noiseForBots(mz, m.id);
       break;
     }
     case 'hp': {
       const p = playerInfo.get(m.id); if (p) p.hp = m.hp;
+      const from = m.from ? (m.from === myId ? P.pos : (remotes.get(m.from) || {}).pos) : null;
       if (m.id === myId) {
-        if (m.hp < P.hp && m.from) { const r = remotes.get(m.from); hurt(r ? r.pos : null, P.hp - m.hp); }
+        if (m.hp < P.hp) hurt(from || null, P.hp - m.hp);
         P.hp = m.hp;
-      } else if (m.from === myId && m.dmg) { /* confirmed */ }
+      } else if (m.dmg) {
+        const r = remotes.get(m.id); if (r) { r.op.flinch = 1; r.op.flinchDir = Math.random() < 0.5 ? 1 : -1; }
+        const b = bots.get(m.id); if (b) b.hurtBy(from);
+      }
       break;
     }
     case 'kill': {
-      applyScores(m.scores);
+      applyScores(m.scores); if (m.teams) teamKills = m.teams; renderScore();
       const kn = nameOf(m.killer), vn = nameOf(m.victim);
-      feed(`<b style="color:${colorOf(m.killer)}">${esc(kn)}</b> <span>${WEAPONS[m.w] ? WEAPONS[m.w].name.toLowerCase() : ''}${m.head ? ' · headshot' : ''}</span> <b style="color:${colorOf(m.victim)}">${esc(vn)}</b>`);
-      if (m.victim === myId) { const r = remotes.get(m.killer); dieLocal(r ? r.pos.clone() : null, kn, m.head); }
+      if (m.killer) feed(`<b style="color:${colorOf(m.killer)}">${esc(kn)}</b> <span>${WEAPONS[m.w] ? WEAPONS[m.w].name.toLowerCase() : ''}${m.head ? ' · headshot' : ''}</span> <b style="color:${colorOf(m.victim)}">${esc(vn)}</b>`);
+      else feed(`<b style="color:${colorOf(m.victim)}">${esc(vn)}</b> <span>fell</span>`);
+      const b = bots.get(m.victim); if (b) b.alive = false;
+      if (m.victim === myId) { const r = remotes.get(m.killer); dieLocal(r ? r.pos.clone() : null, m.killer ? kn : 'a fall', m.head); }
       else { const r = remotes.get(m.victim); if (r) r.die(m.killer === myId ? P.pos : (remotes.get(m.killer) || {}).pos); }
       if (m.killer === myId) { SFX.kill(); showHit('kill'); showBanner(m.head ? 'Headshot' : 'Eliminated', vn, 1600); }
       break;
     }
     case 'end': {
-      applyScores(m.scores); matchOver = true;
-      const win = m.winner === myId;
-      showBanner(win ? 'Victory' : `${nameOf(m.winner)} wins`, 'New match starts in 10 seconds', 10000);
+      applyScores(m.scores); if (m.teams) teamKills = m.teams; matchOver = true;
+      const team = m.team >= 0;
+      const win = team ? m.team === P.team : m.winner === myId;
+      showBanner(win ? 'Victory' : team ? `Team ${TEAM_NAMES[m.team]} wins` : `${nameOf(m.winner)} wins`, 'New match starts in 10 seconds', 10000);
       showBoard(true); break;
     }
-    case 'start': applyScores(m.scores); matchOver = false; hideBoard(); showBanner('New match', `First to ${killTarget} kills`, 2500); break;
+    case 'start': if (m.cfg) cfg = m.cfg; if (m.target) killTarget = m.target; teamKills = m.teams || [0, 0]; applyScores(m.scores); matchOver = false; $('board').hidden = true;
+      showBanner('New match', cfg.mode === 'team' ? `Teams · first team to ${killTarget} kills` : `First to ${killTarget} kills`, 2500); break;
+    case 'rope': startRopeHeli(m); break;
     case 'pong': pingMs = Math.round(performance.now() - m.ts); break;
   }
 }
 function dieLocal(killerPos, killerName, head) {
-  P.alive = false; P.deadT = 0; P.killer = killerPos; P.adsHeld = false; mouseDown = false;
+  P.alive = false; P.deadT = 0; P.killer = killerPos; P.adsHeld = false; mouseDown = false; P.rope = null;
   viewmodels.forEach(v => v.root.visible = false);
   showBanner('Killed', `by ${killerName}${head ? ' · headshot' : ''} · respawning`, 3000);
 }
 function sendState(dt) {
   sendAcc += dt; if (sendAcc < 0.05) return; sendAcc = 0;
   if (!P.alive) return;
-  netSend({ t: 'state', p: [+P.pos.x.toFixed(3), +P.pos.y.toFixed(3), +P.pos.z.toFixed(3)], y: +P.yaw.toFixed(3), pi: +P.pitch.toFixed(3), c: +P.crouch.toFixed(2), w: P.weapon });
+  const f = (P.reloadT > 0 ? 1 : 0) | (P.rope ? 2 : 0) | (P.sprint > 0.5 ? 4 : 0) | (P.ads > 0.5 ? 8 : 0);
+  netSend({ t: 'state', p: [+P.pos.x.toFixed(3), +P.pos.y.toFixed(3), +P.pos.z.toFixed(3)], y: +P.yaw.toFixed(3), pi: +P.pitch.toFixed(3), c: +P.crouch.toFixed(2), w: P.weapon, f });
 }
 setInterval(() => { if (online) netSend({ t: 'ping', ts: performance.now() }); }, 2000);
 
@@ -1377,17 +1764,26 @@ function hurt(fromPos, dmg) {
 function renderScore() {
   const el = $('score');
   if (!online) { el.innerHTML = `<div class="p"><span>Practice</span><b>${practiceHits}</b></div><div class="to">Steel targets<br>head = 2</div>`; return; }
+  if (cfg.mode === 'team') {
+    el.innerHTML = [0, 1].map(t => `<div class="p" style="color:${TEAM_CSS[t]}"><span>${TEAM_NAMES[t]}${t === P.team ? ' (you)' : ''}</span><b>${teamKills[t] || 0}</b></div>`).join('') + `<div class="to">First<br>to ${killTarget}</div>`;
+    return;
+  }
   const list = [...playerInfo.values()].sort((a, b) => b.kills - a.kills);
-  el.innerHTML = list.map(p => `<div class="p" style="color:${SLOT_CSS[p.slot]}"><span>${esc(p.id === myId ? (settings.name || 'You') : p.name)}</span><b>${p.kills}</b></div>`).join('') + `<div class="to">First<br>to ${killTarget}</div>`;
+  let shown = list.slice(0, 4);
+  const meP = playerInfo.get(myId); if (meP && !shown.includes(meP)) shown = list.slice(0, 3).concat(meP);
+  el.innerHTML = shown.map(p => `<div class="p" style="color:${colorOf(p.id)}"><span>${esc(p.id === myId ? (settings.name || 'You') : p.name)}</span><b>${p.kills}</b></div>`).join('') + `<div class="to">First<br>to ${killTarget}</div>`;
   if (list.length < 2) el.innerHTML += `<div class="to" style="color:var(--amber)">Waiting for<br>opponent</div>`;
 }
 function showBoard(final = false) {
   const b = $('board');
-  if (!online) { b.innerHTML = `<h2>Practice range</h2><p>Hits: ${practiceHits}. Start the Tidebreak server to play against someone on your Wi-Fi.</p>`; b.hidden = false; return; }
-  const list = [...playerInfo.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  b.innerHTML = `<h2>${final ? 'Match over' : 'Scoreboard'}</h2><table><thead><tr><th>Operator</th><th>Kills</th><th>Deaths</th><th>K/D</th></tr></thead><tbody>` +
-    list.map(p => `<tr><td><i style="background:${SLOT_CSS[p.slot]}"></i>${esc(p.id === myId ? (settings.name || 'You') + ' (you)' : p.name)}</td><td>${p.kills}</td><td>${p.deaths}</td><td>${(p.kills / Math.max(1, p.deaths)).toFixed(2)}</td></tr>`).join('') +
-    `</tbody></table><p>First to ${killTarget} kills · ping ${pingMs} ms · accuracy ${P.shots ? Math.round(P.hits / P.shots * 100) : 0}%</p>`;
+  if (!online) { b.innerHTML = `<h2>Practice range</h2><p>Hits: ${practiceHits}.</p>`; b.hidden = false; return; }
+  const row = p => `<tr><td><i style="background:${colorOf(p.id)}"></i>${esc(p.id === myId ? (settings.name || 'You') + ' (you)' : p.name)}${p.bot ? ' <span style="color:var(--dim);font-size:11px">BOT</span>' : ''}</td><td>${p.kills}</td><td>${p.deaths}</td><td>${(p.kills / Math.max(1, p.deaths)).toFixed(2)}</td></tr>`;
+  const sort = l => l.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+  const head = `<thead><tr><th>Operator</th><th>Kills</th><th>Deaths</th><th>K/D</th></tr></thead>`;
+  let body;
+  if (cfg.mode === 'team') body = [0, 1].map(t => `<tr><td colspan="4" style="color:${TEAM_CSS[t]};font:800 18px var(--display);text-transform:uppercase;padding-top:12px">${TEAM_NAMES[t]} · ${teamKills[t] || 0}</td></tr>` + sort([...playerInfo.values()].filter(p => p.team === t)).map(row).join('')).join('');
+  else body = sort([...playerInfo.values()]).map(row).join('');
+  b.innerHTML = `<h2>${final ? 'Match over' : 'Scoreboard'}</h2><table>${head}<tbody>${body}</tbody></table><p>${cfg.mode === 'team' ? 'Teams' : 'Free for all'} · first to ${killTarget} kills · ${netMode === 'local' ? 'offline practice' : 'ping ' + pingMs + ' ms'} · accuracy ${P.shots ? Math.round(P.hits / P.shots * 100) : 0}%</p>`;
   b.hidden = false;
 }
 function hideBoard() { if (!matchOver) $('board').hidden = true; }
@@ -1408,12 +1804,12 @@ function updateHUD(dt) {
   const speed = Math.hypot(P.vel.x, P.vel.z);
   const gap = 5 + (lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : 3) + P.kick * 0.02) * 260;
   const cr = $('cross').children; cr[0].style.left = (-gap - 9) + 'px'; cr[1].style.left = gap + 'px'; cr[2].style.top = (-gap - 9) + 'px'; cr[3].style.top = gap + 'px';
-  $('cross').style.opacity = P.alive ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
+  $('cross').style.opacity = P.alive && !P.rope ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
   $('scope').style.opacity = w.scope && P.alive ? clamp((P.ads - 0.75) * 5, 0, 1) : 0;
   if (hitT > 0) { hitT -= dt; if (hitT <= 0) $('hit').style.opacity = 0; }
   dmgFlash = Math.max(0, dmgFlash - dt * 0.9);
   grade.uniforms.dmg.value = Math.max(dmgFlash, P.alive ? clamp((40 - P.hp) / 40, 0, 1) * 0.6 : 0.8);
-  { const key = `${perf.fps}|${online}|${pingMs}`; if (perf.shown !== key) { perf.shown = key; $('net').textContent = (online ? `LAN · ${pingMs} ms` : 'Practice range') + (perf.fps ? ` · ${perf.fps} fps` : ''); } }
+  { const key = `${perf.fps}|${online}|${pingMs}`; if (perf.shown !== key) { perf.shown = key; $('net').textContent = (netMode === 'local' ? 'Offline practice' : online ? `${viaTunnelHost() ? 'Online' : 'Wi-Fi'} · ${pingMs} ms` : 'Practice range') + (perf.fps ? ` · ${perf.fps} fps` : ''); } }
 }
 
 
@@ -1910,13 +2306,13 @@ const WAKE_TEX = ctex(512, (g, S) => {
 WAKE_TEX.wrapS = WAKE_TEX.wrapT = THREE.ClampToEdgeWrapping;
 const wakeMat = new THREE.MeshBasicMaterial({ map: WAKE_TEX, transparent: true, depthWrite: false, opacity: 0.85, color: new THREE.Color(1.1, 1.15, 1.15), polygonOffset: true, polygonOffsetFactor: -6 });
 // Built models are pooled and reused so a spawn never builds geometry or compiles shaders mid-game.
-const MAKERS = { heli: () => makeHeli(), jet: () => makeJet(), fac: () => makeFAC(), corvette: () => makeCorvette() };
-const POOL = { heli: [], jet: [], fac: [], corvette: [] };
+const MAKERS = { heli: () => makeHeli(), jet: () => makeJet(), fac: () => makeFAC(), corvette: () => makeCorvette(), utility: () => makeUtilityHeli() };
+const POOL = { heli: [], jet: [], fac: [], corvette: [], utility: [] };
 const takeModel = kind => POOL[kind].pop() || MAKERS[kind]();
 const giveModel = (kind, m) => { scene.remove(m.g); if (m.wake) scene.remove(m.wake); m.snd = null; POOL[kind].push(m); };
 function prewarm() {
   const add = [];
-  for (const [kind, n] of [['heli', 1], ['jet', 2], ['fac', 1], ['corvette', 1]])
+  for (const [kind, n] of [['heli', 1], ['jet', 2], ['fac', 1], ['corvette', 1], ['utility', 1]])
     while (POOL[kind].length < n) POOL[kind].push(MAKERS[kind]());
   for (const list of Object.values(POOL)) for (const m of list) { m.g.position.set(0, -500, 0); scene.add(m.g); add.push(m.g); }
   try {
@@ -2027,6 +2423,233 @@ function updateFlybys(dt) {
   }
 }
 
+
+// ======================================================= ROPE HELICOPTER
+// A Hellenic Navy utility helicopter comes in low now and then, hovers with a rope down, carries anyone
+// holding on to another part of the compound, drops them off and leaves. Everyone sees the same visit.
+let UTIL_MAT = null, UTIL_PART = null;
+function utilMaterials() {
+  if (UTIL_MAT) return;
+  const skin = skinTextures(1024, 2048, '#6f7a83', {
+    marks(g, W, H) {
+      for (const side of [1, -1]) {
+        paintSide(g, W, H, side, 0.16, 0, gg => { gg.translate(0, -2); drawFlag(gg, 120); });
+        paintSide(g, W, H, side, 0.28, 0, gg => { gg.translate(0, 4); drawText(gg, 'ΠΟΛΕΜΙΚΟ ΝΑΥΤΙΚΟ', 26, 'rgba(18,22,26,.8)'); });
+        paintSide(g, W, H, side, side > 0 ? 0.42 : 0.6, 0, gg => { gg.translate(0, -30); drawRoundel(gg, 130); });
+        paintSide(g, W, H, side, 0.86, 0, gg => { gg.translate(0, 20); drawText(gg, 'PN 52', 46, 'rgba(18,22,26,.8)'); });
+        paintSide(g, W, H, side, 0.78, 0, gg => { gg.translate(0, -60); gg.fillStyle = 'rgba(14,16,18,.55)'; gg.fillRect(-70, -8, 140, 16); });
+      }
+      g.fillStyle = 'rgba(200,40,30,.7)'; g.fillRect(W * 0.46, H * 0.06, W * 0.08, H * 0.02); // tail warning band
+      const gr = g.createLinearGradient(0, H * 0.35, 0, H * 0.55); gr.addColorStop(0, 'rgba(15,12,10,0)'); gr.addColorStop(0.5, 'rgba(15,12,10,.3)'); gr.addColorStop(1, 'rgba(15,12,10,0)');
+      g.fillStyle = gr; g.fillRect(W * 0.4, H * 0.35, W * 0.2, H * 0.2);
+    }
+  });
+  UTIL_MAT = std({ map: skin.map, bumpMap: skin.bump, bumpScale: 1.3, roughness: 0.58, metalness: 0.3 });
+  const part = skinTextures(512, 512, '#6f7a83', {}); part.map.repeat.set(0.35, 0.35); part.bump.repeat.set(0.35, 0.35);
+  UTIL_PART = std({ map: part.map, bumpMap: part.bump, bumpScale: 1.1, roughness: 0.58, metalness: 0.3 });
+}
+function makeUtilityHeli() { // twin-engine naval utility helicopter, forward = +z, ~16 m fuselage
+  utilMaterials();
+  const g = new THREE.Group(), M1 = UTIL_MAT, MP = UTIL_PART;
+  am(g, loft([
+    { z: -9.2, w: 0, ht: 0, hb: 0, y: 1.0 }, { z: -9.0, w: 0.34, ht: 0.3, hb: 0.24, y: 1.0, n: 2.4 }, { z: -6.0, w: 0.5, ht: 0.38, hb: 0.3, y: 0.9, n: 2.5 },
+    { z: -3.6, w: 0.95, ht: 0.62, hb: 0.48, y: 0.68, n: 3 }, { z: -2.5, w: 2.0, ht: 1.05, hb: 0.95, y: 0.25, n: 4.5 }, { z: 0, w: 2.3, ht: 1.15, hb: 1.05, y: 0.2, n: 5 },
+    { z: 3.0, w: 2.25, ht: 1.1, hb: 1.05, y: 0.15, n: 5 }, { z: 4.6, w: 2.0, ht: 0.78, hb: 0.98, y: 0.05, n: 4 }, { z: 5.8, w: 1.55, ht: 0.42, hb: 0.72, y: -0.05, n: 3 },
+    { z: 6.5, w: 0.7, ht: 0.18, hb: 0.38, y: -0.12, n: 2.5 }, { z: 6.75, w: 0, ht: 0, hb: 0, y: -0.12 }
+  ], 56, 120), M1);
+  am(g, loft([ // windscreen
+    { z: 3.9, w: 0, ht: 0, hb: 0.05, y: 0.95 }, { z: 4.1, w: 1.9, ht: 0.3, hb: 0.05, y: 0.9, n: 3.6 }, { z: 5.1, w: 1.8, ht: 0.42, hb: 0.05, y: 0.55, n: 3.4 },
+    { z: 6.1, w: 1.3, ht: 0.3, hb: 0.05, y: 0.12, n: 3 }, { z: 6.45, w: 0, ht: 0, hb: 0.05, y: 0.0 }
+  ], 36, 40), AIRM.glass);
+  for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.03, 0.55, 0.8), AIRM.glass, s * 1.1, 0.55, 3.6);
+  // open sliding door on the right (+x) with the dark cabin behind it, door slid back
+  am(g, new THREE.BoxGeometry(0.04, 1.45, 2.4), AIRM.black, 1.12, 0.0, 0.6);
+  am(g, new THREE.BoxGeometry(0.07, 1.5, 2.45), MP, 1.2, 0.02, -1.9);
+  for (const z of [-0.4, 1.6]) am(g, new THREE.BoxGeometry(0.05, 1.5, 0.06), AIRM.gunmetal, 1.14, 0.0, z);
+  am(g, new THREE.BoxGeometry(0.04, 0.9, 1.4), AIRM.glass, -1.12, 0.3, 0.6); // closed left door window
+  // hoist beam over the door: the rope hangs from here
+  am(g, new THREE.BoxGeometry(0.9, 0.12, 0.14), AIRM.gunmetal, 1.5, 0.95, 0.6); am(g, new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12).rotateX(Math.PI / 2), AIRM.black, 1.9, 0.88, 0.6);
+  // engines, exhausts, mast
+  am(g, loft([{ z: -3.0, w: 0, ht: 0, hb: 0, y: 1.3 }, { z: -2.7, w: 1.2, ht: 0.35, hb: 0.05, y: 1.3, n: 3 }, { z: 1.6, w: 1.45, ht: 0.55, hb: 0.05, y: 1.3, n: 3.4 }, { z: 2.4, w: 0, ht: 0, hb: 0.05, y: 1.3 }], 28, 30), MP);
+  for (const s of [-1, 1]) { am(g, cylZ(0.2, 0.17, 0.6, 14), AIRM.exhaust, s * 0.55, 1.55, -2.9, 0, s * 0.4, 0); am(g, new THREE.CircleGeometry(0.2, 16), AIRM.black, s * 0.5, 1.55, 1.95); }
+  am(g, new THREE.CylinderGeometry(0.12, 0.16, 0.7, 14), AIRM.gunmetal, 0, 2.05, 0.1);
+  // sponsons with main wheels, nose wheel
+  for (const s of [-1, 1]) {
+    am(g, loft([{ z: -1.4, w: 0, ht: 0, hb: 0, y: 0 }, { z: -1.0, w: 0.6, ht: 0.28, hb: 0.25, n: 2.6 }, { z: 1.2, w: 0.7, ht: 0.3, hb: 0.28, n: 2.8 }, { z: 1.7, w: 0, ht: 0, hb: 0 }], 20, 20), MP, s * 1.3, -0.75, -0.8);
+    am(g, new THREE.CylinderGeometry(0.32, 0.32, 0.2, 20).rotateZ(Math.PI / 2), AIRM.rubber, s * 1.45, -1.25, -0.6);
+  }
+  am(g, new THREE.CylinderGeometry(0.22, 0.22, 0.16, 18).rotateZ(Math.PI / 2), AIRM.rubber, 0, -1.25, 5.0); am(g, new THREE.CylinderGeometry(0.04, 0.04, 0.5, 8), AIRM.gunmetal, 0, -1.0, 5.0);
+  // tail fin, stabiliser, tail rotor on the left
+  const fin = new THREE.Shape(); fin.moveTo(0, 0); fin.lineTo(1.3, 0); fin.lineTo(0.9, 2.0); fin.lineTo(0.1, 2.0); fin.closePath();
+  const fg = new THREE.ExtrudeGeometry(fin, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 2 }); fg.translate(0, 0, -0.07); fg.rotateY(Math.PI / 2);
+  am(g, fg, MP, 0, 1.15, -7.9);
+  for (const s of [-1, 1]) { const sg = wingGeo([[0, 0.32], [1.5, 0.15], [1.5, -0.25], [0, -0.4]], 0.07, 0.03); if (s < 0) sg.scale(-1, 1, 1); am(g, sg, MP, s * 0.2, 0.9, -6.6); }
+  const tail = new THREE.Group(); tail.position.set(-0.22, 2.55, -8.65); g.add(tail);
+  am(tail, new THREE.CylinderGeometry(0.1, 0.1, 0.16, 12).rotateZ(Math.PI / 2), AIRM.gunmetal);
+  for (let i = 0; i < 4; i++) { const b = am(tail, new THREE.BoxGeometry(0.03, 1.3, 0.18).translate(0, 0.65, 0), AIRM.black, -0.05, 0, 0); b.rotation.x = i * Math.PI / 2; }
+  // main rotor
+  const rotor = new THREE.Group(); rotor.position.set(0, 2.45, 0.1); g.add(rotor);
+  am(rotor, new THREE.CylinderGeometry(0.36, 0.3, 0.28, 18), AIRM.gunmetal);
+  const airfoil = [[0, 0.27], [7.3, 0.26], [7.6, 0.1], [7.62, -0.2], [0, -0.25]];
+  for (let i = 0; i < 4; i++) {
+    const arm = new THREE.Group(); arm.rotation.y = i * Math.PI / 2 + 0.4; rotor.add(arm);
+    am(arm, new THREE.BoxGeometry(0.2, 0.12, 0.7), AIRM.gunmetal, 0, 0, 0.55);
+    am(arm, wingGeo(airfoil.map(([a, b]) => [b, a]), 0.05, 0.02), AIRM.black, 0, 0, 0.6, 0, 0, 0.05);
+    am(arm, new THREE.BoxGeometry(0.5, 0.075, 0.25), std({ color: 0xc9b23a, roughness: 0.6 }), 0, 0, 8.1);
+  }
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(8.3, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: ROTOR_BLUR, transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.8 }));
+  disk.position.y = 0.02; rotor.add(disk);
+  const nr = am(g, new THREE.SphereGeometry(0.06, 8, 6), AIRM.navR, -1.45, -0.5, -0.6), ng = am(g, new THREE.SphereGeometry(0.06, 8, 6), AIRM.navG, 1.45, -0.5, -0.6);
+  const strobe = am(g, new THREE.SphereGeometry(0.07, 8, 6), AIRM.strobe, 0, 3.2, -8.0);
+  // crew chief kneeling in the door, watching the rope
+  const crew = makeOperator(9, 0x6b6a5c); crew.g.position.set(0.55, -0.95, 0.6); crew.g.rotation.y = Math.PI / 2; crew.g.scale.setScalar(0.98); g.add(crew.g);
+  g.traverse(o => { if (o.isMesh && o.material.transparent) o.castShadow = false; });
+  return { g, rotor, tail, strobe, blink: [nr, ng], crew, anchor: new V3(1.9, 0.82, 0.6) };
+}
+
+const ROPE_N = 17, ROPE_SEG = 0.65, HOVER_Y = 9.85;
+const ropeHeli = { active: false, m: null, t: 0, n: 0, pts: [], prev: [], mesh: null, snd: null, yaw: 0, vel: new V3(), lastPos: new V3(), phase: '' };
+function ropeMesh() {
+  const m = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.022, 0.022, 1, 8), ropeMaterial(), ROPE_N - 1);
+  m.castShadow = true; m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); return m;
+}
+function ropeTimeline(r) {
+  const A = new V3(r.a[0], HOVER_Y, r.a[1]), B = new V3(r.b[0], HOVER_Y, r.b[1]);
+  const E = new V3(A.x + r.from * 170, 48, -270), X = new V3(B.x - r.from * 220, 75, 280);
+  const dAB = Math.hypot(B.x - A.x, B.z - A.z), tT = Math.max(9, dAB / 7.5) + 2;
+  return { A, B, E, X, T: [22, 14, tT, 8, 26] };
+}
+const bez = (a, b, c, d, u) => { const v = 1 - u; return a.clone().multiplyScalar(v * v * v).addScaledVector(b, 3 * v * v * u).addScaledVector(c, 3 * v * u * u).addScaledVector(d, u * u * u); };
+function ropeHeliPos(tl, t) {
+  const [t0, t1, t2, t3, t4] = tl.T, { A, B, E, X } = tl;
+  if (t < t0) { const u = 1 - Math.pow(1 - t / t0, 2); return { p: bez(E, new V3(lerp(E.x, A.x, 0.6), 40, A.z - 70), new V3(A.x, HOVER_Y + 6, A.z - 25), A, u), ph: 'in' }; }
+  t -= t0;
+  if (t < t1) return { p: A.clone().add(new V3(Math.sin(t * 0.7) * 0.25, Math.sin(t * 0.9) * 0.18, Math.cos(t * 0.6) * 0.25)), ph: 'hoverA' };
+  t -= t1;
+  if (t < t2) { const u = smoothK(t / t2); const p = A.clone().lerp(B, u); p.y = HOVER_Y + 9 * Math.sin(Math.PI * u); return { p, ph: 'transit' }; }
+  t -= t2;
+  if (t < t3) return { p: B.clone().add(new V3(Math.sin(t * 0.8) * 0.2, -0.15 + Math.sin(t) * 0.12, Math.cos(t * 0.7) * 0.2)), ph: 'hoverB' };
+  t -= t3;
+  if (t < t4) { const u = Math.pow(t / t4, 1.6); return { p: bez(B, new V3(B.x, HOVER_Y + 10, B.z + 25), new V3(lerp(B.x, X.x, 0.5), 50, lerp(B.z, X.z, 0.6)), X, u), ph: 'out' }; }
+  return null;
+}
+function startRopeHeli(r) {
+  if (ropeHeli.active && ropeHeli.n === r.n) return;
+  stopRopeHeli();
+  if (!ropeHeli.m) { ropeHeli.m = takeModel('utility'); ropeHeli.mesh = ropeMesh(); }
+  ropeHeli.active = true; ropeHeli.n = r.n; ropeHeli.tl = ropeTimeline(r); ropeHeli.t = (r.age || 0) / 1000;
+  const s = ropeHeliPos(ropeHeli.tl, ropeHeli.t); if (!s) { ropeHeli.active = false; return; }
+  ropeHeli.m.g.position.copy(s.p); ropeHeli.lastPos.copy(s.p); ropeHeli.yaw = Math.atan2(ropeHeli.tl.A.x - ropeHeli.tl.E.x, ropeHeli.tl.A.z - ropeHeli.tl.E.z);
+  scene.add(ropeHeli.m.g, ropeHeli.mesh);
+  const an = ropeAnchor();
+  ropeHeli.pts = []; ropeHeli.prev = [];
+  for (let i = 0; i < ROPE_N; i++) { const p = an.clone().add(new V3(0, -i * ROPE_SEG, 0)); ropeHeli.pts.push(p); ropeHeli.prev.push(p.clone()); }
+  if (AC) ropeHeli.snd = rotorSound();
+  if (s.ph === 'in') showPrompt('Helicopter inbound · grab its rope (E) to fly across the compound');
+}
+function stopRopeHeli() {
+  if (!ropeHeli.active) return;
+  ropeHeli.active = false; if (P.rope) releaseRope();
+  scene.remove(ropeHeli.m.g, ropeHeli.mesh);
+  if (ropeHeli.snd) { try { ropeHeli.snd.s.stop(); ropeHeli.snd.o.stop(); ropeHeli.snd.lfo.stop(); } catch (e) { } ropeHeli.snd = null; }
+}
+function ropeAnchor() { const m = ropeHeli.m; m.g.updateMatrixWorld(true); return m.anchor.clone().applyMatrix4(m.g.matrixWorld); }
+function rotorSound() {
+  const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420; f.Q.value = 1.6;
+  const am1 = AC.createGain(); am1.gain.value = 0.5;
+  const lfo = AC.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 19.5; const lg = AC.createGain(); lg.gain.value = 0.48; lfo.connect(lg); lg.connect(am1.gain); lfo.start();
+  const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 1150; const of = AC.createBiquadFilter(); of.type = 'bandpass'; of.frequency.value = 1150; of.Q.value = 6; const og = AC.createGain(); og.gain.value = 0.05;
+  const g = AC.createGain(); g.gain.value = 0; const pan = AC.createStereoPanner ? AC.createStereoPanner() : null;
+  s.connect(f); f.connect(am1); am1.connect(g); o.connect(of); of.connect(og); og.connect(g);
+  if (pan) { g.connect(pan); pan.connect(master); } else g.connect(master);
+  s.start(); o.start(); return { s, o, lfo, g, pan };
+}
+function updateRopeHeli(dt) {
+  if (!ropeHeli.active) return;
+  ropeHeli.t += dt;
+  const s = ropeHeliPos(ropeHeli.tl, ropeHeli.t);
+  if (!s) { stopRopeHeli(); return; }
+  const m = ropeHeli.m, prevPh = ropeHeli.phase; ropeHeli.phase = s.ph;
+  const v = s.p.clone().sub(ropeHeli.lastPos).divideScalar(Math.max(dt, 1e-3)); ropeHeli.lastPos.copy(s.p);
+  const acc = v.clone().sub(ropeHeli.vel).divideScalar(Math.max(dt, 1e-3)); ropeHeli.vel.lerp(v, Math.min(1, dt * 4));
+  const hs = Math.hypot(ropeHeli.vel.x, ropeHeli.vel.z);
+  let wantYaw = ropeHeli.yaw;
+  if (hs > 2.5) wantYaw = Math.atan2(ropeHeli.vel.x, ropeHeli.vel.z);
+  const dy = clamp(angDiff(ropeHeli.yaw, wantYaw), -dt * 0.6, dt * 0.6); ropeHeli.yaw += dy;
+  const fwd = new V3(Math.sin(ropeHeli.yaw), 0, Math.cos(ropeHeli.yaw));
+  const pitch = clamp(ropeHeli.vel.dot(fwd) * 0.012 + clamp(acc.dot(fwd), -3, 3) * 0.02, -0.18, 0.25), roll = clamp(-dy / Math.max(dt, 1e-3) * 0.5, -0.3, 0.3);
+  m.g.position.copy(s.p); m.g.rotation.set(0, 0, 0); m.g.rotation.order = 'YXZ'; m.g.rotation.set(pitch, ropeHeli.yaw, roll);
+  m.rotor.rotation.y += dt * 28; m.tail.rotation.x += dt * 70; m.strobe.visible = (ropeHeli.t % 1.1) < 0.08; m.blink.forEach(b => b.visible = (ropeHeli.t % 1.0) < 0.6);
+  poseOperator(m.crew, { vf: 0, vs: 0, crouch: 1, pitch: -0.6, aim: 0.15, reload: -1, rope: 0, w: 0, dt });
+  // rope: verlet chain pinned at the hoist, pulled by riders
+  const pts = ropeHeli.pts, prev = ropeHeli.prev, an = ropeAnchor();
+  const riders = [];
+  for (const r of remotes.values()) if (r.alive && (r.flags & 2)) riders.push(r.pos.clone().add(new V3(0, 2.05, 0)));
+  const sub = Math.min(4, Math.ceil(dt / (1 / 120))), h = dt / sub;
+  for (let k = 0; k < sub; k++) {
+    for (let i = 1; i < ROPE_N; i++) {
+      const p = pts[i], q = prev[i], vx = (p.x - q.x) * 0.99, vy = (p.y - q.y) * 0.99, vz = (p.z - q.z) * 0.99;
+      q.copy(p); p.x += vx + (Math.random() - 0.5) * 0.0008 * (s.p.y < 20 ? 1 : 0); p.y += vy - 9.8 * h * h; p.z += vz;
+      if (p.y < 0.03) p.y = 0.03;
+    }
+    pts[0].copy(an);
+    for (let it = 0; it < 10; it++) {
+      for (let i = 0; i < ROPE_N - 1; i++) {
+        const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), L = d.length() || 1e-6, diff = (L - ROPE_SEG) / L;
+        const wa = i === 0 ? 0 : 0.5, wb = i === 0 ? 1 : 0.5;
+        a.addScaledVector(d, diff * wa); b.addScaledVector(d, -diff * wb);
+      }
+      pts[0].copy(an);
+      if (P.rope) pts[P.rope.i].lerp(P.rope.hold, 0.0); // rider follows the rope (below)
+    }
+  }
+  for (const rp of riders) { let bi = 1, bd = 1e9; for (let i = 1; i < ROPE_N; i++) { const d = pts[i].distanceToSquared(rp); if (d < bd) { bd = d; bi = i; } } if (bd < 9) pts[bi].lerp(rp, 0.5); }
+  const mm = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new V3(0, 1, 0);
+  for (let i = 0; i < ROPE_N - 1; i++) { const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), L = d.length(); q.setFromUnitVectors(up, d.divideScalar(L || 1)); mm.compose(a.clone().add(b).multiplyScalar(0.5), q, new V3(1, L, 1)); ropeHeli.mesh.setMatrixAt(i, mm); }
+  ropeHeli.mesh.instanceMatrix.needsUpdate = true;
+  // downwash dust
+  if (s.p.y < 22 && Math.random() < 0.55) for (let i = 0; i < 1; i++) {
+    const a = Math.random() * Math.PI * 2, rr = R(1.5, 7), gp = new V3(s.p.x + Math.cos(a) * rr, 0.15, s.p.z + Math.sin(a) * rr);
+    if (gp.z < MAP.z0) continue;
+    smoke.spawn(gp, new V3(Math.cos(a) * R(4, 8), R(0.3, 1.2), Math.sin(a) * R(4, 8)), R(0.7, 1.2), R(0.14, 0.3), new THREE.Color(0xc9bba4), -0.4, false, 1.6); smoke.p[smoke.p.length - 1].grow = true;
+  }
+  if (ropeHeli.snd) {
+    const rel = s.p.clone().sub(camera.position), d = rel.length();
+    ropeHeli.snd.g.gain.setTargetAtTime(clamp(95 / (d + 12), 0, 2.4), AC.currentTime, 0.1);
+    if (ropeHeli.snd.pan) { const right = new V3(Math.cos(camera.rotation.y), 0, -Math.sin(camera.rotation.y)); ropeHeli.snd.pan.pan.setTargetAtTime(clamp(rel.normalize().dot(right), -1, 1) * 0.8, AC.currentTime, 0.1); }
+  } else if (AC) ropeHeli.snd = rotorSound();
+  if (P.rope && prevPh === 'hoverB' && s.ph === 'out') releaseRope('Dropped off');
+}
+let ropeHintT = 0;
+function ropeGrabCheck() {
+  if (!ropeHeli.active || P.rope || !P.alive) return;
+  const pts = ropeHeli.pts; let best = -1, bd = 0.95;
+  for (let i = 2; i < ROPE_N; i++) { const p = pts[i]; if (p.y < P.pos.y + 0.3 || p.y > P.pos.y + 2.5) continue; const d = Math.hypot(p.x - P.pos.x, p.z - P.pos.z); if (d < bd) { bd = d; best = i; } }
+  ropeHeli.canGrab = best >= 0;
+  if (best >= 0 && performance.now() - ropeHintT > 700) { ropeHintT = performance.now(); showPrompt('Press E to grab the rope'); }
+}
+function grabRope() {
+  if (!ropeHeli.canGrab || P.rope) return;
+  const pts = ropeHeli.pts; let bi = 2, bd = 1e9;
+  for (let i = 2; i < ROPE_N; i++) { const d = Math.abs(pts[i].y - (P.pos.y + 2.05)) + Math.hypot(pts[i].x - P.pos.x, pts[i].z - P.pos.z); if (d < bd) { bd = d; bi = i; } }
+  P.rope = { i: bi, hold: new V3() }; P.reloadT = 0; P.rl = null; P.ads = 0; P.crouching = false; mouseDown = false;
+  SFX.mech('pouch'); showPrompt('On the rope · E to let go');
+}
+function releaseRope(msg) {
+  if (!P.rope) return; P.rope = null; P.onGround = false; P.minVy = Math.min(0, P.vel.y);
+  P.vel.x = clamp(P.vel.x, -8, 8); P.vel.z = clamp(P.vel.z, -8, 8); P.vel.y = clamp(P.vel.y, -6, 4);
+  if (msg) showPrompt(msg);
+}
+function updateRopeRider(dt) {
+  if (!ropeHeli.active) { releaseRope(); return; }
+  const pt = ropeHeli.pts[P.rope.i], target = pt.clone().add(new V3(0, -2.05, 0));
+  P.vel.copy(target).sub(P.pos).divideScalar(Math.max(dt, 1e-3)); P.pos.copy(target);
+  P.onGround = false; P.ads = lerp(P.ads, 0, dt * 10); P.sprint = 0; P.bobAmt = 0; P.crouch = lerp(P.crouch, 0, dt * 8);
+  P.recP.step(dt); P.recY.step(dt);
+  if (ropeHeli.phase === 'hoverB' && P.pos.y - groundAt(P.pos.x, P.pos.z, 0.3, P.pos.y + 0.5) < 0.45) releaseRope('Dropped off');
+}
+
 // ======================================================= POST
 let composer, bloom, grade, renderPass, wPass;
 const GradeShader = {
@@ -2100,6 +2723,8 @@ addEventListener('keydown', e => {
   if (e.repeat) return;
   keys[e.code] = true;
   if (!P.alive) return;
+  if (e.code === 'KeyE') { if (P.rope) releaseRope(); else grabRope(); }
+  if (P.rope) return;
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyC') P.crouching = !P.crouching;
   if (e.code === 'Digit1') setWeapon(0); if (e.code === 'Digit2') setWeapon(1); if (e.code === 'Digit3') setWeapon(2);
@@ -2133,8 +2758,8 @@ deployBtn.addEventListener('click', async () => {
     const ok = await connect();
     joined = true;
     if (ok === 'full') { setStatus('The match is full (4 players).', 'warn'); deployBtn.disabled = false; deployBtn.textContent = 'Deploy'; joined = false; return; }
-    if (!ok) { online = false; targets.forEach(t => t.pivot.visible = true); respawnLocal(Math.floor(Math.random() * 4)); setStatus('No server found. Playing the offline practice range.', 'warn'); }
-    else setStatus('Connected to the host.', 'ok');
+    if (!ok) { startLocal(); setStatus(hostCfg.bots ? `Offline practice against ${hostCfg.bots} bot${hostCfg.bots > 1 ? 's' : ''}.` : 'Offline practice range.', 'warn'); }
+    else setStatus(isHost ? 'Hosting the match.' : 'Connected to the host.', 'ok');
     renderScore(); deployBtn.disabled = false;
   }
   closeMenu();
@@ -2166,15 +2791,17 @@ function frame() {
   if (water) water.material.uniforms.time.value = elapsed * 0.35;
   if (gameState === 'play' || joined) {
     if (gameState === 'play') updatePlayer(dt);
-    if (gameState === 'play') updateCamera(dt, elapsed);
+    if (gameState === 'play' && !window.__freeCam) updateCamera(dt, elapsed);
     if (online) sendState(dt);
   }
   if (!joined) { // menu flyover
     const a = elapsed * 0.06;
-    camera.position.set(Math.cos(a) * 30, 13 + Math.sin(a * 0.7) * 2, Math.sin(a) * 22 + 2);
-    camera.lookAt(0, 1.5, 0);
+    camera.position.set(Math.cos(a) * 40, 15 + Math.sin(a * 0.7) * 2.5, Math.sin(a) * 30 + 8);
+    camera.lookAt(0, 1.5, 6);
   }
+  updateBots(dt);
   for (const r of remotes.values()) r.update(dt);
+  updateRopeHeli(dt);
   updateTargets(dt);
   updateFlybys(dt); updateFlags(elapsed); updateBoats(dt, elapsed); updateBoatFlags(elapsed);
   sparks.update(dt); debris.update(dt); smoke.update(dt); updateTracers(dt);
@@ -2188,6 +2815,7 @@ function frame() {
 
 // ======================================================= BOOT
 buildMap();
+botCtx.nav = new NavGrid(colliders, MAP);
 buildTargets();
 setupPost();
 prewarm();
@@ -2199,7 +2827,6 @@ window.__booted = true; clearTimeout(window.__bootTimer);
 deployBtn.disabled = false; deployBtn.textContent = 'Deploy';
 // ---- join codes (internet play through the host's Cloudflare quick tunnel)
 const isLocalHost = /^(localhost|127\.)/.test(location.hostname);
-const viaTunnel = /\.trycloudflare\.com$/i.test(location.hostname);
 function normCode(v) {
   return String(v || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/\.trycloudflare\.com.*$/, '').replace(/\/.*$/, '').replace(/[\s_.]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
@@ -2260,13 +2887,14 @@ if (location.protocol === 'file:') {
     }
   }).catch(() => {
     if (polls > 0) { setTimeout(poll, 5000); return; }
-    if (/^https?:$/.test(location.protocol)) { showWebLobby(); return; }
+    if (/^https?:$/.test(location.protocol)) { showWebLobby(); updateHostUI(); return; }
     setStatus('Solo practice range. Enter a join code to play online.', 'warn');
     $('hostnote').innerHTML = 'This page is the <b style="color:var(--amber)">solo practice range</b> with steel targets. To play someone, type their join code above, or host by double-clicking <b>Start Tidebreak.command</b>.';
     showJoinBox();
   });
   poll();
 }
+updateHostUI();
 // ---- website version: one browser hosts, the other joins with a short code
 function showWebLobby() {
   webMode = true;
@@ -2290,7 +2918,7 @@ function showWebLobby() {
       const codeHtml = c => `Your match code: <span class="code">${esc(c)}</span> <button class="btn2" type="button" id="copyweb" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>The other player opens <b style="user-select:all">${esc(link)}</b> or types the code and clicks Join.`;
       msg.innerHTML = codeHtml(code) + '<br>Click <b>Deploy</b> to drop in while you wait.';
       document.addEventListener('click', e => { if (e.target && e.target.id === 'copyweb') { const b = e.target; const txt = `Tidebreak! Open ${link} (match code ${code})`; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => { b.textContent = 'Copied'; }, () => { b.textContent = 'Select the code to copy'; }); } });
-      setStatus('You are hosting match ' + code + '.', 'ok');
+      setStatus('You are hosting match ' + code + '. Pick the mode and bots, then Deploy.', 'ok'); updateHostUI();
     } catch (e) { lock(false); msg.className = 'err'; msg.textContent = why(e); }
   };
   const go = async () => {
@@ -2299,7 +2927,7 @@ function showWebLobby() {
     lock(true); msg.className = ''; msg.textContent = 'Looking for match ' + code + '…';
     try {
       await P2P.join(code);
-      msg.innerHTML = '<b style="color:var(--ink)">Connected to match ' + esc(code) + '.</b> Click Deploy to drop in.';
+      msg.innerHTML = '<b style="color:var(--ink)">Connected to match ' + esc(code) + '.</b> Click Deploy to drop in.'; updateHostUI();
       setStatus('Connected to the host. Deploy to join the match.', 'ok');
     } catch (e) { lock(false); msg.className = 'err'; msg.textContent = why(e); }
   };
@@ -2307,4 +2935,4 @@ function showWebLobby() {
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
 }
 requestAnimationFrame(frame);
-window.__tb = { perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };
+window.__tb = { composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };

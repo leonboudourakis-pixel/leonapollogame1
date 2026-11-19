@@ -12,8 +12,8 @@ const MAX_PLAYERS = 4;
 const PUB = path.join(__dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon' };
 
-// Spawn points (must match SPAWNS in public/game.js)
-const SPAWNS = [[-29, -14], [-29, 0], [-29, 12], [-21, 21.5], [29, -14], [29, 0], [29, 12], [21, 21.5], [-12, -21.5], [12, -21.5]];
+const { Match } = require('./match.js');
+const match = new Match({ killTarget: KILL_TARGET, maxHumans: MAX_PLAYERS, log: t => console.log(t) });
 
 // ---------- HTTP ----------
 const server = http.createServer((req, res) => {
@@ -21,7 +21,7 @@ const server = http.createServer((req, res) => {
   try { u = decodeURIComponent(req.url.split('?')[0]); } catch (e) { u = '/'; }
   if (u === '/info') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }); const viaNet = !!req.headers['cf-connecting-ip'] || /trycloudflare\.com$/i.test((req.headers.host || '').split(':')[0]);
     const o = { state: tunnel.state, msg: tunnel.msg, code: tunnel.state === 'ready' ? tunnel.code : '', url: tunnel.state === 'ready' ? tunnel.url : '' };
-    return res.end(JSON.stringify({ lan: viaNet ? [] : lanAddresses().map(a => a.address), port: PORT, players: players.size, online: o, viaNet })); }
+    return res.end(JSON.stringify({ lan: viaNet ? [] : lanAddresses().map(a => a.address), port: PORT, players: match.humans().length, online: o, viaNet })); }
   if (u === '/probe.gif') { // lets a join page check a code without CORS rules getting in the way
     res.writeHead(200, { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
     return res.end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
@@ -42,7 +42,7 @@ server.on('upgrade', (req, sock) => {
   const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
   sock.setNoDelay(true);
-  onConnect(wrapSocket(sock));
+  onConnect(wrapSocket(sock), isLocalReq(req));
 });
 
 function frame(op, data) {
@@ -88,99 +88,23 @@ function wrapSocket(sock) {
   return c;
 }
 
-// ---------- Deathmatch ----------
-const players = new Map();
-let nextId = 1, matchOver = false;
-
-const broadcast = (msg, except) => { for (const p of players.values()) if (p !== except) p.c.send(msg); };
-const summary = p => ({ id: p.id, name: p.name, slot: p.slot, kills: p.kills, deaths: p.deaths, hp: p.hp, alive: p.alive });
-
-function pickSpawn(p) {
-  let best = 0, bestD = -1;
-  SPAWNS.forEach((s, i) => {
-    let d = 1e9;
-    for (const o of players.values()) if (o !== p && o.alive && o.pos) d = Math.min(d, Math.hypot(o.pos[0] - s[0], o.pos[2] - s[1]));
-    d += Math.random() * 6; // a little variety
-    if (d > bestD) { bestD = d; best = i; }
-  });
-  return best;
+// ---------- Match (rules live in match.js) ----------
+function isLocalReq(req) {
+  const ip = (req.socket.remoteAddress || '').replace('::ffff:', '');
+  return (ip === '127.0.0.1' || ip === '::1') && !req.headers['cf-connecting-ip'];
 }
-
-function spawn(p) {
-  if (!players.has(p.id)) return;
-  const s = pickSpawn(p);
-  p.hp = 100; p.alive = true; p.pos = [SPAWNS[s][0], 0, SPAWNS[s][1]]; p.lastHurt = 0;
-  broadcast({ t: 'spawn', id: p.id, s });
-}
-
-function onConnect(c) {
+function onConnect(c, local) {
   let me = null;
   c.onmsg = m => {
     if (m.t === 'hello' && !me) {
-      if (players.size >= MAX_PLAYERS) { c.send({ t: 'full' }); c.close(); return; }
-      const used = new Set([...players.values()].map(p => p.slot));
-      let slot = 0; while (used.has(slot)) slot++;
-      me = { id: nextId++, c, name: String(m.name || 'Operator').replace(/[<>]/g, '').slice(0, 16) || 'Operator', slot, kills: 0, deaths: 0, hp: 100, alive: false, pos: null, lastHurt: 0 };
-      players.set(me.id, me);
-      c.send({ t: 'welcome', you: me.id, target: KILL_TARGET, players: [...players.values()].map(summary), over: matchOver });
-      broadcast({ t: 'join', p: summary(me) }, me);
-      console.log(`  + ${me.name} joined (${players.size}/${MAX_PLAYERS})`);
-      spawn(me);
+      me = match.join(m.name, o => c.send(o), local, m.cfg);
+      if (!me) { c.send({ t: 'full' }); c.close(); }
       return;
     }
-    if (!me) return;
-    switch (m.t) {
-      case 'state':
-        if (Array.isArray(m.p)) me.pos = m.p;
-        m.id = me.id; broadcast(m, me); break;
-      case 'shot':
-        m.id = me.id; broadcast(m, me); break;
-      case 'hit': {
-        const t = players.get(m.target);
-        if (!t || !t.alive || !me.alive || matchOver || t === me) return;
-        const dmg = Math.max(0, Math.min(150, +m.dmg || 0));
-        t.hp -= dmg; t.lastHurt = Date.now();
-        broadcast({ t: 'hp', id: t.id, hp: Math.max(0, Math.round(t.hp)), from: me.id, dmg });
-        if (t.hp <= 0) {
-          t.alive = false; t.deaths++; me.kills++;
-          broadcast({ t: 'kill', killer: me.id, victim: t.id, head: !!m.head, w: m.w, scores: [...players.values()].map(summary) });
-          if (me.kills >= KILL_TARGET) {
-            matchOver = true;
-            broadcast({ t: 'end', winner: me.id, scores: [...players.values()].map(summary) });
-            console.log(`  ★ ${me.name} wins the match`);
-            setTimeout(restart, 10000);
-          } else setTimeout(() => spawn(t), 3000);
-        }
-        break;
-      }
-      case 'ping': c.send({ t: 'pong', ts: m.ts }); break;
-    }
+    if (me) match.msg(me, m);
   };
-  c.onclose = () => {
-    if (!me) return;
-    players.delete(me.id);
-    broadcast({ t: 'leave', id: me.id });
-    console.log(`  - ${me.name} left (${players.size}/${MAX_PLAYERS})`);
-    if (players.size === 0) matchOver = false;
-  };
+  c.onclose = () => { if (me) match.leave(me.id); me = null; };
 }
-
-function restart() {
-  matchOver = false;
-  for (const p of players.values()) { p.kills = 0; p.deaths = 0; }
-  broadcast({ t: 'start', scores: [...players.values()].map(summary) });
-  for (const p of players.values()) spawn(p);
-}
-
-setInterval(() => { // health regen after 5s without damage
-  const now = Date.now();
-  for (const p of players.values()) {
-    if (p.alive && p.hp < 100 && now - p.lastHurt > 5000) {
-      p.hp = Math.min(100, p.hp + 4);
-      broadcast({ t: 'hp', id: p.id, hp: Math.round(p.hp) });
-    }
-  }
-}, 200);
 
 function lanAddresses() {
   const out = [];
@@ -300,7 +224,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  On the other laptop:    http://${ips[0].address}:${PORT}`);
     for (const a of ips.slice(1)) console.log(`                          http://${a.address}:${PORT}   (${a.name})`);
   } else console.log('  (No Wi-Fi address found. Are you connected to Wi-Fi?)');
-  console.log(`\n  First to ${KILL_TARGET} kills wins. Keep this window open while you play.`);
+  console.log(`\n  First to ${KILL_TARGET} kills wins (team games: ${KILL_TARGET * 2}). Up to ${MAX_PLAYERS} players; the host can add bots in the game menu. Keep this window open while you play.`);
   console.log('  Press Ctrl+C to stop the server.\n');
   if (process.env.ONLINE !== '0') { console.log('  Setting up internet play (join code)...'); startTunnel(); }
 });
