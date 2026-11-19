@@ -2914,7 +2914,7 @@ function showWebLobby() {
     lock(true); msg.className = ''; msg.textContent = 'Getting a match code…';
     try {
       const code = await P2P.host(() => { msg.innerHTML = codeHtml(code) + '<br><b style="color:var(--ink)">A player joined.</b> Click Deploy if you have not yet.'; });
-      const link = location.origin + location.pathname + '#' + code;
+      const link = location.origin + location.pathname + location.search + '#' + code;
       const codeHtml = c => `Your match code: <span class="code">${esc(c)}</span> <button class="btn2" type="button" id="copyweb" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>The other player opens <b style="user-select:all">${esc(link)}</b> or types the code and clicks Join.`;
       msg.innerHTML = codeHtml(code) + '<br>Click <b>Deploy</b> to drop in while you wait.';
       document.addEventListener('click', e => { if (e.target && e.target.id === 'copyweb') { const b = e.target; const txt = `Tidebreak! Open ${link} (match code ${code})`; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => { b.textContent = 'Copied'; }, () => { b.textContent = 'Select the code to copy'; }); } });
