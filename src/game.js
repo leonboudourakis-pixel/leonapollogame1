@@ -3308,7 +3308,7 @@ function rotorSound() {
 }
 function updateRopeHeli(H, dt) {
   if (!H.active) return;
-  if (H.clock) H.t = H.clock(); else H.t += dt;
+  const tWas = H.t; if (H.clock) H.t = H.clock(); else H.t += dt;
   const s = H.path(H.t);
   if (!s) { stopRopeHeli(H); return; }
   const m = H.m, prevPh = H.phase; H.phase = s.ph;
@@ -3325,7 +3325,12 @@ function updateRopeHeli(H, dt) {
   m.rotor.rotation.y += dt * 28; m.tail.rotation.x += dt * 70; m.strobe.visible = (H.t % 1.1) < 0.08; m.blink.forEach(b => b.visible = (H.t % 1.0) < 0.6);
   poseOperator(m.crew, { vf: 0, vs: 0, crouch: 1, pitch: -0.6, aim: 0.15, reload: -1, rope: 0, w: 0, dt });
   // rope: verlet chain pinned at the hoist, pulled by riders; it lies on the ground or the ship's deck, never through it
-  const pts = H.pts, prev = H.prev, an = ropeAnchor(H);
+  const pts = H.pts, prev = H.prev, an = ropeAnchor(H), an0 = pts[0].clone();
+  { // a wall-clock flight can jump when a frame hitches: carry the rope along with the jump instead of whipping it
+    const real = H.t - tWas, jump = an.clone().sub(an0);
+    const f = real > dt * 1.5 ? 1 - dt / real : jump.length() > 45 * dt ? 1 - 45 * dt / jump.length() : 0;
+    if (f > 0) { jump.multiplyScalar(f); for (let i = 0; i < ROPE_N; i++) { pts[i].add(jump); prev[i].add(jump); } an0.add(jump); }
+  }
   const riders = [];
   for (const r of remotes.values()) if (r.alive && (r.flags & 18)) riders.push(r.pos.clone().add(new V3(0, 2.05, 0)));
   const sub = Math.min(4, Math.ceil(dt / (1 / 120))), h = dt / sub;
@@ -3335,14 +3340,14 @@ function updateRopeHeli(H, dt) {
       q.copy(p); p.x += vx + (Math.random() - 0.5) * 0.0008 * (s.p.y < 20 ? 1 : 0); p.y += vy - 9.8 * h * h; p.z += vz;
       const fl = ropeFloor(p.x, p.z) + 0.03; if (p.y < fl) p.y = fl;
     }
-    pts[0].copy(an);
+    const ak = (k + 1) / sub; pts[0].copy(an0).lerp(an, ak);
     for (let it = 0; it < 10; it++) {
       for (let i = 0; i < ROPE_N - 1; i++) {
         const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), L = d.length() || 1e-6, diff = (L - ROPE_SEG) / L;
         const wa = i === 0 ? 0 : 0.5, wb = i === 0 ? 1 : 0.5;
         a.addScaledVector(d, diff * wa); b.addScaledVector(d, -diff * wb);
       }
-      pts[0].copy(an);
+      pts[0].copy(an0).lerp(an, ak);
     }
   }
   for (const rp of riders) { let bi = 1, bd = 1e9; for (let i = 1; i < ROPE_N; i++) { const d = pts[i].distanceToSquared(rp); if (d < bd) { bd = d; bi = i; } } if (bd < 9) pts[bi].lerp(rp, 0.5); }
@@ -3379,12 +3384,12 @@ function grabRope(H, forced) {
   if (!H || !H.active) return;
   const pts = H.pts; let bi = ROPE_N - 2, bd = 1e9;
   if (!forced) for (let i = 2; i < ROPE_N; i++) { const d = Math.abs(pts[i].y - (P.pos.y + 2.05)) + Math.hypot(pts[i].x - P.pos.x, pts[i].z - P.pos.z); if (d < bd) { bd = d; bi = i; } }
-  P.rope = { h: H, i: bi, blend: forced ? 0 : 1, from: P.pos.clone() }; P.crouching = false; P.swim = false; P.ladder = null;
+  P.rope = { h: H, i: bi, blend: forced ? 0 : 1, from: P.pos.clone(), dur: forced ? clamp(P.pos.distanceTo(pts[bi]) / 11, 1.3, 4.5) : 1.3 }; P.crouching = false; P.swim = false; P.ladder = null;
   SFX.mech('pouch'); showPrompt(forced ? 'The crew hooks you onto the rope · hold on' : 'On the rope · you can shoot and reload · E to let go');
 }
 function releaseRope(msg) {
-  if (!P.rope) return; P.rope = null; P.onGround = false; P.minVy = Math.min(0, P.vel.y);
-  P.vel.x = clamp(P.vel.x, -8, 8); P.vel.z = clamp(P.vel.z, -8, 8); P.vel.y = clamp(P.vel.y, -6, 4);
+  if (!P.rope) return; P.rope = null; P.onGround = false;
+  P.vel.x = clamp(P.vel.x, -8, 8); P.vel.z = clamp(P.vel.z, -8, 8); P.vel.y = clamp(P.vel.y, -6, 4); P.minVy = Math.min(0, P.vel.y); // the rope's own whip never counts as a fall
   // never let go inside the ground, a roof or a wall
   const g = groundAt(P.pos.x, P.pos.z, 0.36, P.pos.y + 0.8); if (P.pos.y < g) { P.pos.y = g; P.vel.y = Math.max(0, P.vel.y); }
   collideCircle(P.pos, 0.36, P.pos.y, P.pos.y + 1.8);
@@ -3398,7 +3403,7 @@ function updateRopeRider(dt) {
   const g = groundAt(target.x, target.z, 0.3, pt.y - 0.3); let standing = false;
   if (target.y < g) { target.y = g; standing = true; }
   if (target.y < SWIM_Y) target.y = SWIM_Y;
-  if (P.rope.blend < 1) { P.rope.blend = Math.min(1, P.rope.blend + dt / 1.3); target.copy(P.rope.from.clone().lerp(target, smoothK(P.rope.blend))); }
+  if (P.rope.blend < 1) { P.rope.blend = Math.min(1, P.rope.blend + dt / P.rope.dur); target.copy(P.rope.from.clone().lerp(target, smoothK(P.rope.blend))); }
   P.vel.copy(target).sub(P.pos).divideScalar(Math.max(dt, 1e-3)); P.pos.copy(target);
   P.onGround = false; P.sprint = 0; P.bobAmt = 0; P.crouch = lerp(P.crouch, 0, dt * 8); P.flinch = Math.max(0, P.flinch - dt);
   weaponTick(dt, false);
@@ -4177,7 +4182,7 @@ function frame() {
   sky.position.copy(camera.position);
   if (gameState === 'play') updateHUD(dt);
   grade.uniforms.time.value = elapsed;
-  composer.render(dt);
+  if (!window.__noRender) composer.render(dt);
   requestAnimationFrame(frame);
 }
 

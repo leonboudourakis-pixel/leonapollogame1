@@ -262,7 +262,7 @@ const SH = {
   gunTan: new THREE.MeshStandardMaterial({ color: 0x8a7656, roughness: 0.65, metalness: 0.1 }),
   polymer: new THREE.MeshStandardMaterial({ color: 0x18191b, roughness: 0.6, metalness: 0.15 }),
   lens: new THREE.MeshPhysicalMaterial({ color: 0x0a0c0e, roughness: 0.05, metalness: 0.6, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 2.5 }),
-  clearLens: new THREE.MeshPhysicalMaterial({ color: 0x9fb0b8, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.35, clearcoat: 1, envMapIntensity: 2 }),
+  clearLens: new THREE.MeshPhysicalMaterial({ color: 0x2a3338, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.14, clearcoat: 1, envMapIntensity: 0.9, depthWrite: false }),
   sole: new THREE.MeshStandardMaterial({ color: 0x151412, roughness: 0.95 }),
   rope: null
 };
