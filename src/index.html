@@ -81,12 +81,14 @@ input[type=range]{accent-color:var(--amber);width:200px}
 #hit{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;opacity:0}
 #hit i{position:absolute;left:14px;top:-1px;width:2px;height:10px;background:#fff;transform-origin:1px 16px}
 #hit.kill i{background:var(--hostile)}
-#scope{position:absolute;inset:0;opacity:0;background:
-  radial-gradient(circle at 50% 50%,transparent 0,transparent 38vmin,#000 38.3vmin)}
-#scope::before,#scope::after{content:"";position:absolute;left:50%;top:50%;background:#000}
-#scope::before{width:76vmin;height:1px;margin-left:-38vmin}
-#scope::after{height:76vmin;width:1px;margin-top:-38vmin}
-#scope b{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#ff3b2f;box-shadow:0 0 6px #ff3b2f}
+#scope{position:absolute;inset:0;opacity:0;pointer-events:none;overflow:hidden}
+#scope .ring{position:absolute;left:50%;top:50%;width:300vmax;height:300vmax;margin:-150vmax 0 0 -150vmax;
+  background:radial-gradient(circle at 50% 50%,transparent 0,transparent calc(41vmin - 2px),rgba(0,0,0,.55) 41vmin,rgba(10,4,0,.92) 41.6vmin,#000 43vmin);will-change:transform}
+#scope .lens{position:absolute;left:50%;top:50%;width:84vmin;height:84vmin;margin:-42vmin 0 0 -42vmin;border-radius:50%;
+  background:radial-gradient(circle at 38% 34%,rgba(255,255,255,.07),transparent 30%),radial-gradient(circle,transparent 60%,rgba(0,20,30,.35) 92%,rgba(0,0,0,.7) 100%)}
+#scope svg{position:absolute;left:50%;top:50%;width:84vmin;height:84vmin;margin:-42vmin 0 0 -42vmin}
+#scope .info{position:absolute;left:50%;top:calc(50% + 30vmin);transform:translateX(-50%);font:600 11px/1.4 var(--mono,monospace);letter-spacing:.12em;color:rgba(255,255,255,.7);text-shadow:0 1px 2px #000;white-space:nowrap}
+#scope .info b{color:#ffcf6a}
 .corner{position:absolute;display:grid;gap:4px}
 #vitals{left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));bottom:max(26px,calc(env(safe-area-inset-bottom,0px) + 12px))}
 #hpnum{font:800 54px/.9 var(--display);font-variant-numeric:tabular-nums}
@@ -113,6 +115,7 @@ input[type=range]{accent-color:var(--amber);width:200px}
 #banner b{font:800 44px/1 var(--display);text-transform:uppercase;letter-spacing:.04em}
 #banner span{color:var(--dim);font-size:13px}
 #prompt{position:absolute;left:50%;top:62%;transform:translateX(-50%);font-size:12px;letter-spacing:.1em;text-transform:uppercase;background:var(--panel);padding:6px 12px}
+#hitflash{position:absolute;inset:0;opacity:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(120,0,0,0) 35%,rgba(150,10,10,.55) 75%,rgba(90,0,0,.9) 100%)}
 #dmg{position:absolute;left:50%;top:50%}
 #dmg i{position:absolute;width:160px;height:160px;left:-80px;top:-80px;border-radius:50%;
   border:6px solid transparent;border-top-color:rgba(255,70,50,.85);filter:blur(1px);animation:dmg 1.2s forwards}
@@ -137,14 +140,22 @@ input[type=range]{accent-color:var(--amber);width:200px}
 <div id="hud" hidden>
   <div id="cross"><i class="h" style="left:-15px"></i><i class="h" style="left:6px"></i><i class="v" style="top:-15px"></i><i class="v" style="top:6px"></i><i class="dot"></i></div>
   <div id="hit"><i style="transform:rotate(45deg)"></i><i style="transform:rotate(135deg)"></i><i style="transform:rotate(225deg)"></i><i style="transform:rotate(315deg)"></i></div>
-  <div id="scope"><b></b></div>
+  <div id="scope"><div class="ring"></div><div class="lens"></div><svg viewBox="-100 -100 200 200">
+    <g stroke="#050505" fill="#050505">
+      <rect x="-100" y="-1.6" width="62" height="3.2"/><rect x="38" y="-1.6" width="62" height="3.2"/><rect x="-1.6" y="38" width="3.2" height="62"/><rect x="-1.6" y="-100" width="3.2" height="62"/>
+      <line x1="-38" y1="0" x2="38" y2="0" stroke-width=".35"/><line x1="0" y1="-38" x2="0" y2="38" stroke-width=".35"/>
+      <g stroke="none"><circle cx="-7.6" cy="0" r=".7"/><circle cx="-15.2" cy="0" r=".7"/><circle cx="-22.8" cy="0" r=".7"/><circle cx="-30.4" cy="0" r=".7"/><circle cx="7.6" cy="0" r=".7"/><circle cx="15.2" cy="0" r=".7"/><circle cx="22.8" cy="0" r=".7"/><circle cx="30.4" cy="0" r=".7"/>
+      <circle cy="-7.6" cx="0" r=".7"/><circle cy="-15.2" cx="0" r=".7"/><circle cy="-22.8" cx="0" r=".7"/><circle cy="-30.4" cx="0" r=".7"/><circle cy="7.6" cx="0" r=".7"/><circle cy="15.2" cx="0" r=".7"/><circle cy="22.8" cx="0" r=".7"/><circle cy="30.4" cx="0" r=".7"/></g>
+      <g stroke-width=".3"><line x1="-2" y1="11.4" x2="2" y2="11.4"/><line x1="-2.6" y1="19" x2="2.6" y2="19"/><line x1="-3.2" y1="26.6" x2="3.2" y2="26.6"/></g>
+    </g><circle r=".55" fill="#ff3b2f"/></svg><div class="info"><span id="scopeZoom">12×</span> · <span id="scopeBreath">HOLD SHIFT TO STEADY · SCROLL TO ZOOM</span></div></div>
   <div id="dmg"></div>
+  <div id="hitflash"></div>
   <div id="net"></div>
   <div id="score"></div>
   <div id="feed"></div>
   <div id="banner" hidden><b id="bannerT"></b><span id="bannerS"></span></div>
   <div id="prompt" hidden></div>
-  <div class="corner" id="vitals"><span class="label">Health</span><div id="hpnum">100</div><div id="hpbar"><b style="width:100%"></b></div></div>
+  <div class="corner" id="vitals"><span class="label">Health</span><div id="hpnum">200</div><div id="hpbar"><b style="width:100%"></b></div></div>
   <div class="corner" id="arms"><div id="slots"></div><div id="ammo">30<small> / 120</small></div><div id="wname">Carbine</div></div>
   <div id="board" hidden></div>
 </div>
@@ -188,7 +199,7 @@ input[type=range]{accent-color:var(--amber);width:200px}
         <input type="text" id="webcode" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="8" placeholder="match code" style="text-transform:uppercase;width:140px">
         <button class="btn2" id="webjoinbtn" type="button">Join</button>
       </div>
-      <div id="webmsg">The host gets a short code to share. Both players need this page open.</div>
+      <div id="webmsg">The host gets a short code to share. Up to 4 players join with that same code.</div>
     </div>
     <p class="note" id="hostnote">Ammo crates in the warehouse and on the catwalk refill your magazines. Health recovers after five seconds out of fire.</p>
     <div class="keys">

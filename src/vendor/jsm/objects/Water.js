@@ -181,10 +181,23 @@ class Water extends Mesh {
 					vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor;
 					float fres = 0.02 + 0.98 * pow( 1.0 - theta, 5.0 );
 					float shore = clamp( ( -worldPosition.z - 25.0 ) / 70.0, 0.0, 1.0 );
+					// clearer turquoise shallows along the quays and pier, deep blue further out
+					vec2 q1 = abs( worldPosition.xz - vec2( 14.3, 10.0 ) ) - vec2( 56.3, 35.2 );
+					vec2 q2 = abs( worldPosition.xz - vec2( 54.0, -44.6 ) ) - vec2( 8.0, 19.4 );
+					float dLand = min( length( max( q1, 0.0 ) ) + min( max( q1.x, q1.y ), 0.0 ), length( max( q2, 0.0 ) ) + min( max( q2.x, q2.y ), 0.0 ) );
+					float shallow = 1.0 - smoothstep( 0.0, 22.0, dLand );
 					vec3 body = mix( vec3( 0.006, 0.11, 0.15 ), waterColor, shore );
+					body = mix( body, vec3( 0.02, 0.17, 0.19 ), shallow * 0.5 );
 					float up = 0.6 + 0.4 * surfaceNormal.y;
 					vec3 bodyLit = body * ( 0.9 + 0.12 * up ) + sunColor * diffuseLight * 0.012 + scatter * 0.06;
 					vec3 albedo = mix( bodyLit, reflectionSample, clamp( fres * 0.8, 0.0, 0.5 ) ) + reflectionSample * specularLight * 0.35 + sunColor * specularLight * 0.35;
+					// sun glitter: tiny sharp glints on top of the broad highlight
+					vec3 rS = normalize( reflect( -sunDirection, normalize( surfaceNormal * vec3( 2.2, 1.0, 2.2 ) ) ) );
+					albedo += sunColor * pow( max( 0.0, dot( eyeDirection, rS ) ), 900.0 ) * 3.0;
+					// lapping foam where the water meets the quay walls and the pier
+					float fN = noise.x * 0.5 + 0.5;
+					float lap = ( 1.0 - smoothstep( 0.0, 2.4, dLand ) ) * smoothstep( 0.35, 0.9, fN + 0.35 * sin( dLand * 3.5 - time * 6.0 ) );
+					albedo = mix( albedo, vec3( 0.85, 0.9, 0.9 ), clamp( lap * 0.75, 0.0, 0.8 ) );
 					vec3 outgoingLight = albedo;
 					gl_FragColor = vec4( outgoingLight, alpha );
 
