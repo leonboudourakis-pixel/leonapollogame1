@@ -11,7 +11,7 @@ const SPAWNS = [
 // Open ground where the rope helicopter can hover (x, z)
 const ROPE_POINTS = [[8, -10], [-12, 29], [14, 29], [-37.5, -3], [37, 9.5], [-27, -11], [27, -9], [-6, 21], [56.5, -15], [62, 13]];
 const BOT_NAMES = ['Achilles', 'Odysseus', 'Leonidas', 'Perseus', 'Hector', 'Ajax', 'Theseus', 'Jason', 'Herakles', 'Orion', 'Atlas', 'Castor', 'Kostas', 'Nikos', 'Yannis', 'Dimitris', 'Stavros', 'Alexandros', 'Giorgos', 'Spyros', 'Themistokles', 'Miltiades', 'Kanaris', 'Kolokotronis'];
-const MAX_HP = 150; // players and bots; damage depends on where you are hit (see game.js)
+const MAX_HP = 200; // players and bots; damage depends on where you are hit (see game.js)
 const TEAM_NAMES = ['Poseidon', 'Ares'];
 const MAX_BOTS = 6;
 const ROPE_LIFE = 80000; // ms a rope helicopter visit lasts, from first sight to gone

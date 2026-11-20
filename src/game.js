@@ -24,10 +24,10 @@ const store = {
 };
 // maxPR caps the pixel ratio, budget caps the rendered pixel count (big Retina screens), auto adapts resolution to hold 60 fps.
 const QUALITY = {
-  auto: { maxPR: 1.25, budget: 3.7e6, samples: 4, shadow: 2048, bloom: true, refl: 512, adaptive: true },
+  auto: { maxPR: 1.25, budget: 3.7e6, samples: 4, shadow: 3072, bloom: true, refl: 512, adaptive: true },
   ultra: { maxPR: 2, budget: 9e6, samples: 4, shadow: 4096, bloom: true, refl: 1024 },
-  high: { maxPR: 1.5, budget: 4.2e6, samples: 4, shadow: 2048, bloom: true, refl: 512 },
-  fast: { maxPR: 1, budget: 1.8e6, samples: 0, shadow: 1024, bloom: false, refl: 256 }
+  high: { maxPR: 1.5, budget: 4.2e6, samples: 4, shadow: 3072, bloom: true, refl: 512 },
+  fast: { maxPR: 1, budget: 1.8e6, samples: 0, shadow: 2048, bloom: false, refl: 256 }
 };
 const settings = { name: store.get('name', ''), sens: store.get('sens', 1), quality: store.get('quality2', 'auto') };
 if (!QUALITY[settings.quality]) settings.quality = 'auto';
@@ -55,7 +55,7 @@ const wScene = new THREE.Scene();
 const wCam = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.01, 10);
 wScene.add(wCam);
 
-const SUN_DIR = new V3(-0.62, 0.17, -0.77).normalize();
+const SUN_DIR = new V3(-0.62, 0.235, -0.77).normalize(); // a little higher than before: long shadows, but not so grazing that they smear
 
 // ======================================================= SKY + ENVIRONMENT
 const skyUniforms = {
@@ -112,8 +112,18 @@ const sun = new THREE.DirectionalLight(0xffae73, 3.4);
 sun.position.copy(SUN_DIR).multiplyScalar(110).add(new V3(14, 0, -12)); sun.target.position.set(14, 0, -12);
 sun.castShadow = true;
 Object.assign(sun.shadow.camera, { left: -64, right: 64, top: 64, bottom: -64, near: 10, far: 260 });
-sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
+sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.05;
 scene.add(sun, sun.target);
+// Fit the shadow camera to the whole playable world (compound, dock yard, pier and the ship's berth) in the sun's own frame.
+// The old fixed square missed two corners of the map and wasted most of its height, which showed as missing and blocky shadows.
+function fitShadows() {
+  const C = new V3(14, 0, -20); sun.position.copy(SUN_DIR).multiplyScalar(170).add(C); sun.target.position.copy(C); sun.updateMatrixWorld(true); sun.target.updateMatrixWorld(true);
+  const cam = sun.shadow.camera; cam.position.copy(sun.position); cam.lookAt(C); cam.updateMatrixWorld(true);
+  const inv = cam.matrixWorld.clone().invert(), b = new THREE.Box3(), v = new V3();
+  for (const x of [-44, 72]) for (const y of [-3, 44]) for (const z of [-82, 40]) b.expandByPoint(v.set(x, y, z).applyMatrix4(inv));
+  cam.left = b.min.x - 1; cam.right = b.max.x + 1; cam.bottom = b.min.y - 1; cam.top = b.max.y + 1; cam.near = Math.max(1, -b.max.z - 30); cam.far = -b.min.z + 5; cam.updateProjectionMatrix();
+}
+fitShadows();
 
 // Viewmodel lights (driven from world sun each frame)
 wScene.add(new THREE.HemisphereLight(0x8a9ad0, 0x3a2c24, 0.55));
@@ -243,7 +253,7 @@ const M = {
   wallMetal: std({ map: T.corr, bumpMap: T.corrBump, bumpScale: 2, color: 0x8f9a9e, roughness: 0.5, metalness: 0.55 }),
   roof: std({ map: T.corr, bumpMap: T.corrBump, bumpScale: 2, color: 0x6c6460, roughness: 0.6, metalness: 0.5 }),
   steel: std({ color: 0x3b3e42, roughness: 0.42, metalness: 0.85 }),
-  steelLight: std({ color: 0x8b9095, roughness: 0.35, metalness: 0.9 }),
+  steelLight: std({ color: 0x8b9095, roughness: 0.46, metalness: 0.85 }),
   rail: std({ color: 0xb7b2a8, roughness: 0.55, metalness: 0.6 }),
   paint: std({ map: T.paint, roughness: 0.55, metalness: 0.35 }),
   wood: std({ map: T.wood, roughness: 0.82 }),
@@ -254,7 +264,7 @@ const M = {
   olive: std({ color: 0x4a5236, roughness: 0.6, metalness: 0.3 }),
   warm: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xffc483, emissiveIntensity: 6 }),
   winGlow: new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffb36b, emissiveIntensity: 2.6, roughness: 0.2, metalness: 0.5 }),
-  lamp: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xfff0d0, emissiveIntensity: 10 }),
+  lamp: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xfff0d0, emissiveIntensity: 5.5 }),
   red: new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 0.3, 0.2) }),
   stripe: std({ color: 0xd8c25a, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 }),
   water: std({ color: 0x0c2630, roughness: 0.16, metalness: 0.0, normalMap: T.waterN, normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 1.5 }),
@@ -515,7 +525,7 @@ function buildMap() {
     place(new THREE.SphereGeometry(0.12, 12, 8), M.lamp, x, 4.35, z, { cast: false });
     const pl = new THREE.PointLight(0xffc890, 26, 15, 2); pl.position.set(x, 4.1, z); scene.add(pl);
   }
-  crate(-5.2, 0, -3.4); crate(-5.2, 1.1, -3.4, 1.1, 0.2); crate(-4.0, 0, -3.6); crate(-5.4, 0, 3.4, 1.3); crate(5.3, 0, -3.5, 1.3); crate(5.4, 1.3, -3.5, 1.0, -0.3);
+  crate(-5.2, 0, -3.4); crate(-5.2, 1.1, -3.4, 1.1, 0.2); crate(-4.0, 0, -3.6); crate(-5.4, 0, 3.4, 1.3);
   addBox(-1.6, 0, 1.2, 0.9, 1.05, 3.2, M.olive, { s: 1 });      // workbench
   addBox(2.2, 0, -1.4, 1.2, 1.2, 1.2, M.wood, { s: 1.2 });
   ammoCrateAt(0.9, 0, 3.6);
@@ -526,9 +536,7 @@ function buildMap() {
   // ---- North lane: containers + catwalk
   container(-19, -18.6, false, 0, 0); container(-19, -18.6, false, 1, 1);
   container(-4, -18, false, 0, 4);
-  container(11, -18.6, false, 0, 2);
   container(22, -14, true, 0, 5);
-  container(-24, -6, true, 0, 3);
   // stairs to the catwalk container top (2.59)
   for (let i = 1; i <= 7; i++) {
     const top = 2.59 * i / 7, x1 = -7.03 - (7 - i) * 0.55, x0 = x1 - 0.55;
@@ -537,21 +545,18 @@ function buildMap() {
   place(cyl(0.03, 4.2, 6).rotateZ(Math.atan2(2.59, 3.85)), M.rail, -9.0, 2.2, -17.15);
   // container top kit
   sandbags(-2.2, -18, 2.2, true, 2); ammoCrateAt(-5.6, 2.59, -18.4);
-  crate(13, 0, -16.6, 1.0); crate(14.1, 0, -16.6, 1.0, 0.4); crate(13.5, 1.0, -16.6, 0.9, 0.2);
   barrel(-14.6, -20.8, 0); barrel(-14, -21.4, 1); barrel(-13.3, -20.9, 2);
-  jersey(4, -13, false, 3.2); jersey(-12, -11.5, true, 3.2);
+  jersey(4, -13, false, 3.2);
 
   // ---- Middle flanks
-  container(17, 8, true, 0, 6);
-  container(-15, 10, false, 0, 2); container(-15, 10, false, 1, 0);
-  sandbags(-14, 2, 3.6, false); sandbags(13.5, -3, 3.6, true);
-  crate(-21, 0, 5, 1.2); crate(-21.2, 0, 6.3, 1.0, 0.3); barrel(-20.6, 3.6, 3);
-  crate(21, 0, -3, 1.2, 0.1); barrel(22.4, -2.4, 0); barrel(22.6, -1.6, 1);
-  barrel(9.6, 6.4, 2); barrel(10.3, 6.9, 0); crate(25, 0, 5, 1.1);
+  container(-15, 10, false, 0, 2);
+  sandbags(-14, 2, 3.6, false);
+  crate(-21, 0, 5, 1.2);
+  barrel(9.6, 6.4, 2); barrel(10.3, 6.9, 0);
 
   // ---- South lane: truck, barriers, fuel tanks, guard hut
   truck(-4, 15.4);
-  jersey(4.5, 19.5, false, 3.2); jersey(-17, 14, true, 3.2); jersey(24.5, 2.5, true, 3.2);
+  jersey(4.5, 19.5, false, 3.2);
   sandbags(8.5, 13, 3.2, false);
   // fuel tanks
   for (const z of [16.6, 19.6]) {
@@ -563,7 +568,6 @@ function buildMap() {
   place(boxGeo(1.2, 0.7, 0.04, 1), M.winGlow, -26, 1.6, 17.28, { cast: false });
   for (const sx of [-0.75, 0.75]) place(boxGeo(0.35, 0.8, 0.05, 1), M.aegean, -26 + sx, 1.6, 17.25, { cast: false });
   wallLamp(-23.7, 2.5, 19.9, 1, 0);
-  crate(-18, 0, 21.8, 1.1); crate(-16.9, 0, 22, 1.0, .5); barrel(13, 22.6, 3); barrel(13.7, 22.9, 2);
   crate(28.5, 0, 17.8, 1.2, 0.2);
 
   // ---- More ups and downs: warehouse roof stair, a raised loading terrace, and a lookout tower
@@ -578,6 +582,7 @@ function buildMap() {
   expansion();
 
   dockYard();
+  furnish();
   noCastScope = true; village(); noCastScope = false;
   // flags: warehouse roof, seawall, painted wall flag
   wavingFlag(0, 6.37, 0, 9, 2.6, 1.7); wavingFlag(-38, 0, -23.4, 8, 2.2, 1.45); wavingFlag(38, 0, -23.4, 8, 2.2, 1.45);
@@ -743,12 +748,11 @@ function expansion() {
     spot(cx, cz + 2.5); spot(cx + 1.5, cz - 1);
   }
   // ---- Containers you can walk into, and more cover in the new ground
-  openContainer(-37.5, -14, true, 3, -1); openContainer(37.5, 15.5, true, 1, 1);
+  openContainer(-37.5, -14, true, 3, -1);
   container(-37.5, -14, true, 1, 6); // stacked box on top of the west open container
-  container(38, 24.5, false, 0, 2);
-  sandbags(-35, -6.5, 3.4, false); sandbags(35, 8.5, 3.2, false); jersey(-37, 20, false, 3.2); jersey(31, -18, true, 3.2);
-  crate(-40, 0, -21.8, 1.2); crate(-38.8, 0, -22, 1.0, 0.4); barrel(40, -21.5, 1); barrel(39.4, -22.1, 3); barrel(-40.2, 26, 0);
-  stoneWall(-20, 31, 6, true); stoneWall(8, 27.2, 5, false); stoneWall(-6, 35.6, 4, false); stoneWall(-9, 25.4, 3.5, false, 0.9);
+  sandbags(-35, -6.5, 3.4, false); jersey(-37, 20, false, 3.2);
+  crate(-40, 0, -21.8, 1.2); barrel(40, -21.5, 1); barrel(39.4, -22.1, 3); barrel(-40.2, 26, 0);
+  stoneWall(-20, 31, 6, true); stoneWall(8, 27.2, 5, false); stoneWall(-9, 25.4, 3.5, false, 0.9);
   oliveTree(-7.5, 0, 29.5); addCollider(-7.75, 0, 29.25, -7.25, 2.2, 29.75); oliveTree(9, 0, 32); addCollider(8.75, 0, 31.75, 9.25, 2.2, 32.25);
   // well
   place(cyl(0.9, 0.85, 20), M.stone, -16, 0.42, 34); addCollider(-16.8, 0, 33.2, -15.2, 0.85, 34.8);
@@ -1103,6 +1107,139 @@ function mergeStatic() {
   staticMeshes.length = 0;
 }
 
+// ======================================================= INTERIORS
+// Every building is fitted out for what it is: offices with desks and live screens, supply stores with racking,
+// cargo sheds with pallets and a forklift, a workshop in the boathouse. Furniture stays low or against the walls.
+let INTM = null;
+function intMats() {
+  if (INTM) return INTM;
+  const scr = draw => { const t = ctex(256, draw); return new THREE.MeshStandardMaterial({ map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 1.1, roughness: 0.25 }); };
+  const txt = (g, s, x, y, size = 11, col = '#9fe8b0') => { g.fillStyle = col; g.font = `${size}px Menlo, monospace`; g.fillText(s, x, y); };
+  const chart = ctex(1024, (g, S) => { // nautical chart of the island: soundings, contours, compass rose, Greek names
+    g.fillStyle = '#e9e2c9'; g.fillRect(0, 0, S, S); grain(g, S, 10);
+    g.fillStyle = '#cfe0e6'; g.fillRect(0, 0, S, S * 0.62);
+    g.strokeStyle = 'rgba(70,110,140,.5)'; g.lineWidth = 1.5; for (let k = 0; k < 7; k++) { g.beginPath(); for (let x = 0; x <= S; x += 16) { const y = S * 0.56 - k * 62 + Math.sin(x * 0.012 + k) * 22 + Math.sin(x * 0.03 + k * 2) * 9; x ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }
+    g.fillStyle = '#e7d9a6'; g.beginPath(); g.moveTo(0, S * 0.6); for (let x = 0; x <= S; x += 20) g.lineTo(x, S * 0.6 + Math.sin(x * 0.011) * 26 + Math.sin(x * 0.041) * 10); g.lineTo(S, S); g.lineTo(0, S); g.fill();
+    g.strokeStyle = '#6b5a3a'; g.lineWidth = 2; g.stroke();
+    g.fillStyle = '#b9ae86'; g.fillRect(S * 0.32, S * 0.6, S * 0.36, S * 0.2); g.fillRect(S * 0.6, S * 0.36, S * 0.07, S * 0.26);
+    g.fillStyle = 'rgba(40,60,80,.75)'; g.font = '13px Georgia, serif'; for (let i = 0; i < 90; i++) g.fillText(String(4 + (sr() * 38 | 0)), sr() * S, sr() * S * 0.54);
+    g.strokeStyle = 'rgba(150,40,40,.8)'; g.lineWidth = 2; g.beginPath(); g.arc(S * 0.2, S * 0.24, 80, 0, 7); g.stroke(); for (let a = 0; a < 16; a++) { g.beginPath(); g.moveTo(S * 0.2 + Math.cos(a * 0.3927) * (a % 4 ? 62 : 30), S * 0.24 + Math.sin(a * 0.3927) * (a % 4 ? 62 : 30)); g.lineTo(S * 0.2 + Math.cos(a * 0.3927) * 80, S * 0.24 + Math.sin(a * 0.3927) * 80); g.stroke(); }
+    g.fillStyle = '#3a2f1c'; g.font = 'italic 34px Georgia, serif'; g.fillText('ΛΙΜΑΝΙ ΚΕΣΣΑ', S * 0.36, S * 0.72); g.font = 'italic 24px Georgia, serif'; g.fillText('ΑΙΓΑΙΟ ΠΕΛΑΓΟΣ', S * 0.52, S * 0.16); g.fillText('Προβλήτα', S * 0.69, S * 0.47); g.fillText('Χωριό', S * 0.12, S * 0.9);
+    g.strokeStyle = '#3a2f1c'; g.lineWidth = 8; g.strokeRect(10, 10, S - 20, S - 20);
+  });
+  INTM = {
+    laminate: std({ color: 0xb9a688, roughness: 0.5 }), dark: std({ color: 0x232527, roughness: 0.55, metalness: 0.3 }), fabric: std({ color: 0x1e2f4a, roughness: 0.95 }),
+    cab: std({ color: 0x8d949a, roughness: 0.45, metalness: 0.6 }), locker: std({ color: 0x44533f, roughness: 0.55, metalness: 0.4 }), yellow: std({ color: 0xe0a91e, roughness: 0.5, metalness: 0.25 }),
+    card: std({ map: ctex(256, (g, S) => { g.fillStyle = '#b08a5a'; g.fillRect(0, 0, S, S); grain(g, S, 14); g.fillStyle = 'rgba(226,205,160,.9)'; g.fillRect(0, S * 0.44, S, S * 0.12); g.fillStyle = '#f1efe6'; g.fillRect(S * 0.56, S * 0.62, S * 0.34, S * 0.24); g.fillStyle = '#222'; for (let i = 0; i < 5; i++) g.fillRect(S * 0.59, S * 0.66 + i * 9, S * (0.12 + sr() * 0.16), 3); g.strokeStyle = 'rgba(60,40,20,.6)'; g.lineWidth = 3; g.strokeRect(2, 2, S - 4, S - 4); g.fillStyle = 'rgba(50,30,15,.8)'; g.font = '700 26px Arial'; g.fillText('ΕΥΘΡΑΥΣΤΟ', S * 0.08, S * 0.3); }), roughness: 0.9 }),
+    wrap: std({ color: 0xd9e2e6, roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.55 }),
+    terra: std({ color: 0xb5623c, roughness: 0.85 }), tin: std({ color: 0x3f7a3a, roughness: 0.35, metalness: 0.7 }), tin2: std({ color: 0xc9a227, roughness: 0.35, metalness: 0.7 }), glassG: std({ color: 0x1f4a2a, roughness: 0.15, metalness: 0.2 }),
+    jerry: std({ color: 0xa3261c, roughness: 0.5, metalness: 0.3 }), ring: std({ color: 0xe2571c, roughness: 0.7 }), white: std({ color: 0xeeeeea, roughness: 0.6 }),
+    chart: std({ map: chart, roughness: 0.85 }),
+    board: std({ map: ctex(512, (g, S) => { g.fillStyle = '#f3f3ef'; g.fillRect(0, 0, S, S); g.strokeStyle = '#1d4fa0'; g.lineWidth = 3; for (let i = 0; i < 7; i++) { g.beginPath(); let x = 30, y = 60 + i * 58; g.moveTo(x, y); for (let k = 0; k < 9; k++) { x += 20 + sr() * 30; g.lineTo(x, y + (sr() - 0.5) * 16); } g.stroke(); } g.strokeStyle = '#b02a20'; g.strokeRect(S * 0.6, S * 0.1, S * 0.32, S * 0.3); g.beginPath(); g.moveTo(S * 0.62, S * 0.36); g.lineTo(S * 0.72, S * 0.2); g.lineTo(S * 0.8, S * 0.28); g.lineTo(S * 0.9, S * 0.13); g.stroke(); g.fillStyle = '#222'; g.font = '700 30px Arial'; g.fillText('ΒΑΡΔΙΕΣ', 30, 36); }), roughness: 0.4 }),
+    peg: std({ map: ctex(512, (g, S) => { g.fillStyle = '#8a6a44'; g.fillRect(0, 0, S, S); for (let y = 12; y < S; y += 24) for (let x = 12; x < S; x += 24) { g.fillStyle = 'rgba(30,20,10,.6)'; g.beginPath(); g.arc(x, y, 2.5, 0, 7); g.fill(); } g.lineCap = 'round'; const tool = (x, y, l, w, col, a) => { g.save(); g.translate(x, y); g.rotate(a); g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, l); g.stroke(); g.restore(); }; for (let i = 0; i < 9; i++) { tool(40 + i * 52, 60, 110, 9, '#9aa0a6', 0); tool(40 + i * 52, 150, 40, 16, i % 2 ? '#b02a20' : '#e0a91e', 0); } for (let i = 0; i < 6; i++) { tool(60 + i * 78, 280, 150, 7, '#c9ced2', 0.2); g.strokeStyle = '#c9ced2'; g.lineWidth = 7; g.beginPath(); g.arc(60 + i * 78, 272, 14, 0.5, 5.6); g.stroke(); } }), roughness: 0.85 }),
+    screens: [
+      scr((g, S) => { g.fillStyle = '#04120a'; g.fillRect(0, 0, S, S); g.strokeStyle = '#1f7a44'; g.lineWidth = 1.5; for (const r of [30, 60, 90, 118]) { g.beginPath(); g.arc(S / 2, S / 2, r, 0, 7); g.stroke(); } g.beginPath(); g.moveTo(S / 2, 8); g.lineTo(S / 2, S - 8); g.moveTo(8, S / 2); g.lineTo(S - 8, S / 2); g.stroke(); const gr = g.createConicGradient ? g.createConicGradient(1.0, S / 2, S / 2) : null; if (gr) { gr.addColorStop(0, 'rgba(80,255,150,.55)'); gr.addColorStop(0.12, 'rgba(80,255,150,0)'); gr.addColorStop(1, 'rgba(80,255,150,0)'); g.fillStyle = gr; g.beginPath(); g.arc(S / 2, S / 2, 118, 0, 7); g.fill(); } g.fillStyle = '#9dffbf'; for (let i = 0; i < 7; i++) { g.beginPath(); g.arc(S / 2 + (sr() - 0.5) * 190, S / 2 + (sr() - 0.5) * 190, 3, 0, 7); g.fill(); } txt(g, 'RADAR ΛΙΜΕΝΑΡΧΕΙΟ', 8, 16); }),
+      scr((g, S) => { g.fillStyle = '#0a0c10'; g.fillRect(0, 0, S, S); for (let i = 0; i < 4; i++) { const x = (i % 2) * S / 2 + 4, y = (i >> 1) * S / 2 + 4, w = S / 2 - 8; const gr = g.createLinearGradient(x, y, x, y + w); gr.addColorStop(0, ['#39485a', '#4a4032', '#2f4a3c', '#44384c'][i]); gr.addColorStop(1, '#12161c'); g.fillStyle = gr; g.fillRect(x, y, w, w); g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(x + w * 0.2, y + w * 0.5, w * 0.3, w * 0.4); g.fillRect(x + w * 0.6, y + w * 0.35, w * 0.25, w * 0.55); txt(g, 'CAM 0' + (i + 1), x + 5, y + 14, 10, '#e8e8e8'); g.fillStyle = '#e03a2a'; g.beginPath(); g.arc(x + w - 10, y + 10, 3.5, 0, 7); g.fill(); } }),
+      scr((g, S) => { g.fillStyle = '#0b1622'; g.fillRect(0, 0, S, S); g.fillStyle = '#17324e'; g.fillRect(0, 0, S, 22); txt(g, 'ΔΗΛΩΤΙΚΟ ΦΟΡΤΙΟΥ  ·  AEGEAN STAR', 6, 15, 10, '#dfe9f2'); for (let i = 0; i < 14; i++) { txt(g, 'HLNU ' + (204000 + (sr() * 9999 | 0)) + '   ' + ['PIR', 'SKG', 'HER', 'LIM'][i % 4] + '   ' + (12 + (sr() * 18 | 0)) + ' t', 8, 42 + i * 15, 10, i === 5 ? '#ffd27a' : '#8fc4e8'); } g.fillStyle = '#2f9e5a'; g.fillRect(8, S - 26, S * 0.6, 10); }),
+      scr((g, S) => { g.fillStyle = '#101418'; g.fillRect(0, 0, S, S); g.fillStyle = '#cfe0e6'; g.fillRect(6, 6, S - 12, S - 12); g.fillStyle = '#e7d9a6'; g.beginPath(); g.moveTo(6, S * 0.6); g.bezierCurveTo(S * 0.3, S * 0.45, S * 0.6, S * 0.75, S - 6, S * 0.55); g.lineTo(S - 6, S - 6); g.lineTo(6, S - 6); g.fill(); g.strokeStyle = '#b02a20'; g.lineWidth = 2; g.setLineDash([6, 4]); g.beginPath(); g.moveTo(S * 0.9, S * 0.1); g.lineTo(S * 0.55, S * 0.3); g.lineTo(S * 0.5, S * 0.55); g.stroke(); g.setLineDash([]); g.fillStyle = '#b02a20'; g.beginPath(); g.arc(S * 0.5, S * 0.55, 5, 0, 7); g.fill(); txt(g, 'ECDIS', 12, 20, 11, '#17324e'); })
+    ],
+    leds: new THREE.MeshStandardMaterial({ map: ctex(128, (g, S) => { g.fillStyle = '#0c0d0f'; g.fillRect(0, 0, S, S); for (let y = 8; y < S; y += 10) { g.fillStyle = '#17191c'; g.fillRect(4, y, S - 8, 7); for (let x = 10; x < S - 8; x += 9) if (sr() < 0.45) { g.fillStyle = sr() < 0.75 ? '#35e06a' : '#ffb02a'; g.fillRect(x, y + 2, 3, 3); } } }), emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.4 })
+  };
+  INTM.leds.emissiveMap = INTM.leds.map;
+  return INTM;
+}
+// place a box in a piece of furniture's own frame: dir 0..3 turns it in quarter turns (local +z -> world +z, +x, -z, -x)
+function fbox(x, y, z, dir, lx, ly, lz, w, h, d, mat, o = {}) {
+  const c = [1, 0, -1, 0][dir], sn = [0, 1, 0, -1][dir], odd = dir & 1;
+  return addBox(x + lx * c + lz * sn, y + ly, z - lx * sn + lz * c, odd ? d : w, h, odd ? w : d, mat, { collide: false, s: 1, ...o });
+}
+function fcol(x, y, z, dir, lx, lz, w, d, h) { const c = [1, 0, -1, 0][dir], sn = [0, 1, 0, -1][dir], odd = dir & 1, cx = x + lx * c + lz * sn, cz = z - lx * sn + lz * c, ww = odd ? d : w, dd = odd ? w : d; addCollider(cx - ww / 2, y, cz - dd / 2, cx + ww / 2, y + h, cz + dd / 2); }
+function fplane(x, y, z, dir, lx, ly, lz, w, h, mat) { // upright plane facing local +z
+  const c = [1, 0, -1, 0][dir], sn = [0, 1, 0, -1][dir];
+  return place(new THREE.PlaneGeometry(w, h), mat, x + lx * c + lz * sn, y + ly, z - lx * sn + lz * c, { ry: dir * Math.PI / 2, cast: false });
+}
+function desk(x, z, dir, screen = 0, y = 0) { // you sit on the local +z side, facing -z
+  const I = intMats();
+  fbox(x, y, z, dir, 0, 0.72, 0, 1.5, 0.04, 0.72, I.laminate); fbox(x, y, z, dir, -0.72, 0, 0, 0.04, 0.72, 0.68, I.cab); fbox(x, y, z, dir, 0.5, 0.12, 0, 0.42, 0.6, 0.62, I.cab);
+  for (const yy of [0.3, 0.5, 0.66]) fbox(x, y, z, dir, 0.5, yy, 0.32, 0.2, 0.02, 0.02, I.dark);
+  fbox(x, y, z, dir, -0.15, 0.76, -0.2, 0.22, 0.02, 0.16, I.dark); fbox(x, y, z, dir, -0.15, 0.78, -0.22, 0.04, 0.12, 0.03, I.dark); fbox(x, y, z, dir, -0.15, 0.88, -0.2, 0.62, 0.38, 0.035, I.dark);
+  fplane(x, y, z, dir, -0.15, 1.07, -0.18, 0.57, 0.33, I.screens[screen % I.screens.length]);
+  fbox(x, y, z, dir, -0.15, 0.76, 0.12, 0.42, 0.018, 0.14, I.dark); fbox(x, y, z, dir, 0.2, 0.76, 0.14, 0.06, 0.025, 0.1, I.dark);
+  fbox(x, y, z, dir, 0.5, 0.76, -0.1, 0.24, 0.05, 0.32, I.white); fbox(x, y, z, dir, -0.58, 0.76, 0.05, 0.09, 0.11, 0.09, I.jerry);
+  fcol(x, y, z, dir, 0, 0, 1.5, 0.72, 0.78);
+  // swivel chair
+  fbox(x, y, z, dir, -0.1, 0.42, 0.75, 0.46, 0.08, 0.46, I.fabric); fbox(x, y, z, dir, -0.1, 0.5, 0.96, 0.44, 0.52, 0.06, I.fabric); fbox(x, y, z, dir, -0.1, 0.06, 0.75, 0.06, 0.36, 0.06, I.dark); fbox(x, y, z, dir, -0.1, 0.02, 0.75, 0.5, 0.04, 0.08, I.dark); fbox(x, y, z, dir, -0.1, 0.02, 0.75, 0.08, 0.04, 0.5, I.dark);
+  fcol(x, y, z, dir, -0.1, 0.8, 0.46, 0.5, 0.5);
+}
+function cabinet(x, z, dir, y = 0, h = 1.32) { const I = intMats(); fbox(x, y, z, dir, 0, 0, 0, 0.48, h, 0.6, I.cab); for (let k = 0; k < Math.round(h / 0.33); k++) { fbox(x, y, z, dir, 0, 0.05 + k * 0.33, 0.3, 0.44, 0.28, 0.012, I.laminate.clone ? I.cab : I.cab); fbox(x, y, z, dir, 0, 0.2 + k * 0.33, 0.31, 0.16, 0.025, 0.02, I.dark); } fcol(x, y, z, dir, 0, 0, 0.48, 0.6, h); }
+function lockers(x, z, dir, n = 3, y = 0) { const I = intMats(); for (let i = 0; i < n; i++) { const lx = (i - (n - 1) / 2) * 0.46; fbox(x, y, z, dir, lx, 0, 0, 0.44, 1.85, 0.5, I.locker); for (const yy of [1.5, 1.58, 1.66]) fbox(x, y, z, dir, lx, yy, 0.25, 0.26, 0.02, 0.012, I.dark); fbox(x, y, z, dir, lx + 0.14, 0.95, 0.255, 0.03, 0.1, 0.02, M.steelLight); } fcol(x, y, z, dir, 0, 0, n * 0.46, 0.5, 1.85); }
+function radioRack(x, z, dir, y = 0) { const I = intMats(); fbox(x, y, z, dir, 0, 0, 0, 0.6, 1.7, 0.6, I.dark); fplane(x, y, z, dir, 0, 0.95, 0.305, 0.54, 1.4, I.leds); fbox(x, y, z, dir, 0.2, 1.7, 0, 0.02, 0.9, 0.02, I.dark); fcol(x, y, z, dir, 0, 0, 0.6, 0.6, 1.7); }
+function wallArt(x, y, z, dir, w, h, mat) { fbox(x, 0, z, dir, 0, y - h / 2 - 0.03, -0.012, w + 0.08, h + 0.06, 0.02, intMats().dark); fplane(x, 0, z, dir, 0, y, 0.004, w, h, mat); }
+// pallet racking: steel uprights and beams, boxes (or tins) on every level. Stands against a wall; long axis is local x.
+function rack(x, z, dir, len, levels = 3, depth = 0.9, stock = 'card', y = 0) {
+  const I = intMats(), H = levels * 0.95 + 0.25;
+  for (const sx of [-len / 2 + 0.04, len / 2 - 0.04]) for (const sz of [-depth / 2 + 0.04, depth / 2 - 0.04]) fbox(x, y, z, dir, sx, 0, sz, 0.07, H, 0.07, I.yellow === undefined ? M.steel : dockMats().crane);
+  for (let l = 0; l < levels; l++) {
+    const ly = 0.2 + l * 0.95;
+    for (const sz of [-depth / 2 + 0.04, depth / 2 - 0.04]) fbox(x, y, z, dir, 0, ly - 0.08, sz, len - 0.08, 0.08, 0.05, I.yellow);
+    fbox(x, y, z, dir, 0, ly, 0, len - 0.1, 0.03, depth - 0.06, M.wood);
+    for (let lx = -len / 2 + 0.35; lx < len / 2 - 0.3;) {
+      const w = SR(0.36, 0.7), h = SR(0.28, 0.7), skip = sr() < 0.14;
+      if (!skip) { if (stock === 'tins') { const m = sr() < 0.5 ? I.tin : I.tin2; for (const dz of [-0.16, 0.16]) fbox(x, y, z, dir, lx + w / 2, ly + 0.03, dz, 0.24, 0.34, 0.2, m); } else fbox(x, y, z, dir, lx + w / 2, ly + 0.03, SR(-0.06, 0.06), w - 0.04, h, depth * SR(0.55, 0.8), I.card, { s: Math.max(w, h) }); }
+      lx += w + 0.05;
+    }
+  }
+  fcol(x, y, z, dir, 0, 0, len, depth, H);
+}
+function wrappedPallet(x, z, h = 1.2, y = 0) { const I = intMats(); addBox(x, y, z, 1.2, 0.14, 1.0, M.wood, { collide: false, s: 1 }); for (let k = 0; k < 2; k++) for (const dx of [-0.29, 0.29]) addBox(x + dx, y + 0.14 + k * h / 2, z, 0.56, h / 2 - 0.02, 0.92, I.card, { collide: false, s: 0.6 }); addBox(x, y + 0.13, z, 1.18, h + 0.03, 0.98, I.wrap, { collide: false, cast: false }); addCollider(x - 0.6, y, z - 0.5, x + 0.6, y + h + 0.16, z + 0.5); }
+function forklift(x, z, dir) { // forks point along local +z
+  const I = intMats(), w = cyl(0.26, 0.2, 16);
+  fbox(x, 0, z, dir, 0, 0.3, -0.25, 1.1, 0.7, 1.7, I.yellow); fbox(x, 0, z, dir, 0, 0.3, -1.2, 1.1, 0.95, 0.4, I.dark); fbox(x, 0, z, dir, 0, 1.0, -0.5, 0.5, 0.1, 0.5, I.dark); fbox(x, 0, z, dir, 0, 1.1, -0.78, 0.5, 0.5, 0.08, I.dark);
+  for (const sx of [-0.5, 0.5]) { fbox(x, 0, z, dir, sx, 1.0, -1.0, 0.06, 1.1, 0.06, I.dark); fbox(x, 0, z, dir, sx, 1.0, 0.25, 0.06, 1.1, 0.06, I.dark); fbox(x, 0, z, dir, sx * 0.7, 0.15, 0.72, 0.1, 2.5, 0.12, I.dark); fbox(x, 0, z, dir, sx * 0.5, 0.12, 1.3, 0.12, 0.05, 1.1, M.steelLight); fbox(x, 0, z, dir, sx * 0.5, 0.12, 0.8, 0.12, 0.6, 0.05, M.steelLight); }
+  fbox(x, 0, z, dir, 0, 2.1, -0.38, 1.12, 0.06, 1.36, I.dark); fbox(x, 0, z, dir, 0, 1.5, 0.72, 0.9, 0.08, 0.1, I.dark); fbox(x, 0, z, dir, 0, 0.75, 0.2, 0.05, 0.5, 0.05, I.dark); fbox(x, 0, z, dir, 0, 1.23, 0.14, 0.3, 0.04, 0.3, I.dark);
+  const c = [1, 0, -1, 0][dir], sn = [0, 1, 0, -1][dir];
+  for (const [lx, lz] of [[-0.56, 0.35], [0.56, 0.35], [-0.5, -0.95], [0.5, -0.95]]) place(w, AIRM.rubber, x + lx * c + lz * sn, 0.26, z - lx * sn + lz * c, dir & 1 ? { rx: Math.PI / 2 } : { rz: Math.PI / 2 });
+  fcol(x, 0, z, dir, 0, -0.1, 1.2, 2.5, 2.16);
+}
+let AMPH = null;
+function amphora(x, z, y = 0, sc = 1) { AMPH = AMPH || new THREE.LatheGeometry([[0.06, 0], [0.14, 0.05], [0.26, 0.3], [0.29, 0.5], [0.24, 0.72], [0.12, 0.86], [0.1, 0.98], [0.14, 1.02]].map(p => new THREE.Vector2(p[0], p[1])), 16); const m = place(AMPH, intMats().terra, x, y, z); m.scale.setScalar(sc); addCollider(x - 0.26 * sc, y, z - 0.26 * sc, x + 0.26 * sc, y + sc, z + 0.26 * sc); }
+function tube(x, y, z, alongZ, len = 1.4) { addBox(x, y, z, alongZ ? 0.14 : len, 0.05, alongZ ? len : 0.14, M.steel, { collide: false, cast: false }); place(boxGeo(alongZ ? 0.09 : len - 0.1, 0.03, alongZ ? len - 0.1 : 0.09, 1), M.lamp, x, y - 0.015, z, { cast: false }); }
+function roomLight(x, y, z, power = 14, dist = 11, col = 0xffe2bd) { if (settings.quality === 'fast') return; const l = new THREE.PointLight(col, power, dist, 2); l.position.set(x, y, z); scene.add(l); }
+function furnish() {
+  const I = intMats();
+  // ---- central warehouse: CARGO. Pallet racking, shrink-wrapped pallets, a forklift
+  rack(6.25, -2.6, 3, 3.4, 4); wrappedPallet(3.4, -4.0, 1.3); wrappedPallet(4.75, -4.0, 0.9); forklift(4.6, 3.3, 3);
+  for (const x of [-3, 3]) tube(x, 5.9, 0, false, 2.2);
+  wallArt(-3.6, 2.2, -4.69, 0, 1.8, 1.2, I.board);
+  // ---- guard hut: SECURITY OFFICE with a camera wall
+  desk(-27.38, 19, 1, 1); cabinet(-27.7, 20.12, 1); wallArt(-25.4, 1.6, 20.44, 2, 1.5, 1.1, I.chart); tube(-26, 2.82, 19, true, 1.2); roomLight(-26, 2.4, 19, 6, 6);
+  // ---- gate office: DISPATCH. Desk with the cargo manifest, lockers, radio
+  desk(44.62, 33.5, 1, 2); cabinet(44.3, 35.15, 1); radioRack(47.45, 35.1, 2); wallArt(46, 1.7, 35.29, 2, 1.6, 1.1, I.board); tube(46, 2.72, 33.5, true, 1.2); roomLight(46, 2.3, 33.5, 6, 6);
+  // ---- harbour master's hut on the pier: radar, chart of the harbour
+  desk(49.3, -27.5, 2, 0); wallArt(47.95, 1.55, -28.5, 1, 1.5, 1.1, I.chart); tube(49.5, 2.52, -28.5, false, 1.2);
+  // ---- taverna: bottles behind the counter, stools, amphorae
+  for (let l = 0; l < 3; l++) { addBox(-27.4, 1.25 + l * 0.42, 34.36, 2.3, 0.04, 0.26, M.wood, { collide: false, s: 1 }); for (let b = 0; b < 9; b++) { const bx = -28.4 + b * 0.25 + SR(-0.03, 0.03); place(cyl(0.04, 0.22, 8), sr() < 0.6 ? I.glassG : I.terra, bx, 1.4 + l * 0.42, 34.36, { cast: false }); place(cyl(0.015, 0.1, 6), I.glassG, bx, 1.55 + l * 0.42, 34.36, { cast: false }); } }
+  for (const [tx, tz] of [[-33.5, 29.5], [-28.5, 29.8]]) for (const [dx, dz] of [[0.85, 0], [-0.85, 0], [0, 0.85]]) { place(cyl(0.17, 0.04, 12), M.wood, tx + dx, 0.46, tz + dz); for (const a of [0, 2.1, 4.2]) place(cyl(0.018, 0.46, 6), M.wood, tx + dx + Math.cos(a) * 0.11, 0.23, tz + dz + Math.sin(a) * 0.11, { cast: false }); }
+  amphora(-34.3, 28.0, 0, 1.05); amphora(-33.7, 27.9, 0, 0.85); wallArt(-29, 1.9, 27.81, 0, 1.2, 0.8, I.board); roomLight(-28.5, 2.7, 31, 9, 9, 0xffc98a);
+  // ---- barracks, upstairs: OPERATIONS ROOM. Two desks, a chart table, radio rack, wall chart
+  desk(27.0, 28.0, 0, 3, 3.2); desk(30.4, 28.0, 0, 2, 3.2); radioRack(33.35, 32.3, 3, 3.2); cabinet(33.4, 31.3, 3, 3.2);
+  addBox(27.6, 3.2, 31.2, 1.9, 0.8, 1.2, M.olive, { s: 1 }); { const m = place(new THREE.PlaneGeometry(1.8, 1.1).rotateX(-Math.PI / 2), I.chart, 27.6, 4.012, 31.2, { cast: false }); m.receiveShadow = true; }
+  place(new THREE.PlaneGeometry(2.2, 1.5), I.chart, 22.62, 4.9, 29.7, { ry: Math.PI / 2, cast: false }); for (const x of [26, 30]) tube(x, 6.34, 30, false, 1.6); roomLight(28, 5.7, 30.5, 12, 10); roomLight(27, 2.5, 30.5, 8, 9, 0xffd0a0);
+  lockers(23.6, 32.1, 0, 3, 3.2);
+  // ---- boathouse: WORKSHOP. Tool wall, outboard on a stand, fuel cans, life rings
+  place(new THREE.PlaneGeometry(2.4, 1.2), I.peg, 41.17, 1.75, -2.5, { ry: -Math.PI / 2, cast: false });
+  addBox(40.6, 0, 0.3, 0.5, 0.9, 0.5, M.steel, { s: 1 }); addBox(40.6, 0.9, 0.3, 0.42, 0.5, 0.34, I.dark, { collide: false }); addBox(40.6, 0.25, 0.02, 0.1, 0.7, 0.1, M.steelLight, { collide: false }); place(cyl(0.14, 0.03, 10), M.steelLight, 40.6, 0.25, -0.05, { rx: Math.PI / 2, cast: false });
+  for (const [jx, jz] of [[34.25, -3.4], [34.25, -3.95], [34.7, -3.6]]) { addBox(jx, 0, jz, 0.34, 0.46, 0.18, I.jerry, { s: 1, collide: false }); addBox(jx + 0.1, 0.46, jz, 0.07, 0.05, 0.07, I.dark, { collide: false }); } addCollider(34.05, 0, -4.1, 34.9, 0.5, -3.25);
+  for (const z of [-5.6, -1.2]) { place(new THREE.TorusGeometry(0.34, 0.085, 10, 22), I.ring, 33.9, 1.9, z, { ry: Math.PI / 2, cast: false }); for (const a of [0, 1.57, 3.14, 4.71]) place(new THREE.TorusGeometry(0.34, 0.09, 6, 4, 0.5), I.white, 33.9, 1.9, z, { ry: Math.PI / 2, rx: a, cast: false }); }
+  cabinet(34.2, 3.8, 1); wallArt(36.4, 1.7, 4.19, 2, 1.5, 1.1, I.chart); for (const z of [-8, -1]) tube(37.5, 4.5, z, true, 2.0); roomLight(37.5, 4.0, -4, 16, 13);
+  // ---- old stone storehouse: SUPPLIES. Amphorae, a rack of olive-oil tins
+  amphora(-40.0, 9.2, 0, 1.1); amphora(-40.05, 8.45, 0, 0.9); amphora(-39.5, 8.8, 0, 0.75); rack(-34.95, 9.4, 3, 2.4, 2, 0.7, 'tins'); roomLight(-37.5, 2.8, 10, 8, 8, 0xffc98a);
+  // ---- transit shed on the dock: CARGO HALL with racking and a forklift, and a shipping office in the back corner
+  rack(57.2, 34.4, 2, 4.4, 4, 1.0); forklift(63.2, 29.6, 2); wrappedPallet(55.4, 31.2, 1.4); wrappedPallet(63.6, 21.2, 1.1);
+  desk(65.9, 34.3, 2, 2); cabinet(68.3, 34.5, 2); cabinet(67.75, 34.5, 2); wallArt(66.2, 2.0, 34.94, 2, 2.2, 1.4, I.chart);
+  for (const x of [58, 65]) for (const z of [24, 31]) tube(x, 7.1, z, true, 2.4); roomLight(61.5, 6.3, 27.5, 22, 17);
+}
+
 // ======================================================= PHYSICS
 function collideCircle(pos, r, feetY, headY) {
   for (const c of colliders) {
@@ -1344,8 +1481,8 @@ function ambient() {
 // Recoil, cadence and reloads vary shot to shot: kick strength, drift, muzzle flip, flash, sound and reload timing all jitter.
 // Camera recoil and the viewmodel run on damped springs, so kicks rise and settle smoothly instead of snapping.
 const WEAPONS = [
-  { name: 'Machine gun', mag: 75, reserve: 225, rpm: 640, auto: true, dmg: 28, head: 2.0, hip: 0.045, ads: 0.0055, kickV: 0.0135, kickH: 0.006, drift: 0.6, first: 1.3, reload: 3.4, reloadEmpty: 4.0, fov: 50, wfov: 40, range: 220, bot: 0.016, heavy: 0.9, shake: 0.7, vk: { z: 1.5, rx: 2.4, rz: 1.4, x: 0.35 } },
-  { name: 'Sniper rifle', mag: 5, reserve: 25, rpm: 50, auto: false, dmg: 110, head: 2.5, hip: 0.09, ads: 0.0, kickV: 0.05, kickH: 0.01, drift: 0.2, first: 1.0, reload: 2.8, reloadEmpty: 3.3, fov: 9, fov2: 22, wfov: 30, range: 600, scope: true, bolt: 0.85, botK: 0.5, bot: 0.006, heavy: 0.95, vk: { z: 2.2, rx: 3.4, rz: 1.2, x: 0.3 } },
+  { name: 'Machine gun', mag: 120, reserve: 360, rpm: 640, auto: true, dmg: 28, head: 2.0, hip: 0.045, ads: 0.0055, kickV: 0.0135, kickH: 0.006, drift: 0.6, first: 1.3, reload: 3.4, reloadEmpty: 4.0, fov: 50, wfov: 40, range: 220, bot: 0.016, heavy: 0.9, shake: 0.7, vk: { z: 1.5, rx: 2.4, rz: 1.4, x: 0.35 } },
+  { name: 'Sniper rifle', mag: 5, reserve: 25, rpm: 50, auto: false, dmg: 110, head: 2.5, hip: 0.09, ads: 0.0, kickV: 0.05, kickH: 0.01, drift: 0.2, first: 1.0, reload: 2.8, reloadEmpty: 3.3, fov: 6.67, fov2: 16.4, wfov: 30, range: 600, scope: true, bolt: 0.85, botK: 0.5, bot: 0.006, heavy: 0.95, vk: { z: 2.2, rx: 3.4, rz: 1.2, x: 0.3 } },
   { name: 'Shotgun', mag: 7, reserve: 35, rpm: 80, auto: false, dmg: 17, pellets: 9, head: 1.5, hip: 0.06, ads: 0.045, kickV: 0.045, kickH: 0.012, drift: 0.3, first: 1.0, reload: 0.55, reloadEmpty: 0.55, fov: 62, wfov: 44, range: 55, pump: 0.62, botK: 1, bot: 0.03, shake: 1.6, vk: { z: 2.6, rx: 4.2, rz: 1.6, x: 0.4 } },
   { name: 'Sidearm', mag: 12, reserve: 48, rpm: 420, auto: false, dmg: 30, head: 2.0, hip: 0.022, ads: 0.006, kickV: 0.02, kickH: 0.009, drift: 0.3, first: 1.15, reload: 1.5, reloadEmpty: 1.9, fov: 62, wfov: 46, range: 120, bot: 0.02, vk: { z: 0.8, rx: 3.6, rz: 1.4, x: 0.2 } }
 ];
@@ -1478,7 +1615,7 @@ let casingIdx = 0;
 
 // ======================================================= PLAYER
 const P = {
-  pos: new V3(), vel: new V3(), yaw: 0, pitch: 0, onGround: true, crouch: 0, crouching: false, alive: true, hp: 150, flinch: 0,
+  pos: new V3(), vel: new V3(), yaw: 0, pitch: 0, onGround: true, crouch: 0, crouching: false, alive: true, hp: 200, flinch: 0,
   weapon: 0, prevWeapon: 1, ammo: WEAPONS.map(w => ({ mag: w.mag, reserve: w.reserve })), fireCD: 0, reloadT: 0, switchT: 0, rl: null,
   ads: 0, adsHeld: false, kick: 0, bobPhase: 0, bobAmt: 0, sprint: 0, swayX: 0, swayY: 0, fallV: 0, stepAcc: 0, lastShot: 0,
   recP: new Spring(140, 0.85), recY: new Spring(120, 0.9), climb: 0, drift: 0, driftBias: 0, tracerN: 2, slideKick: 0,
@@ -1505,14 +1642,14 @@ function setWeapon(i, instant = false) {
   if (i !== P.weapon) P.prevWeapon = P.weapon;
   P.cycle = null;
   P.weapon = i; P.reloadT = 0; P.rl = null; P.switchT = instant ? 0 : 0.35;
-  viewmodels.forEach((v, k) => { v.root.visible = k === i && !P.rope; v.mag.visible = true; v.mag.position.copy(v.magBase); });
+  viewmodels.forEach((v, k) => { v.root.visible = k === i; v.mag.visible = true; v.mag.position.copy(v.magBase); });
   if (!instant) SFX.mech('pouch');
   updateSlotsHUD();
 }
 
 function startReload() {
   const w = WEAPONS[P.weapon], a = P.ammo[P.weapon];
-  if (P.reloadT > 0 || a.mag >= w.mag || a.reserve <= 0 || P.switchT > 0 || P.rope) return;
+  if (P.reloadT > 0 || a.mag >= w.mag || a.reserve <= 0 || P.switchT > 0) return;
   const empty = a.mag === 0, j = () => R(-0.025, 0.025);
   if (viewmodels[P.weapon].shells) { // one shell at a time into the tube; firing interrupts it
     const n = Math.min(w.mag - a.mag, a.reserve), dur = 0.35 + n * w.reload * R(0.95, 1.05);
@@ -1537,7 +1674,7 @@ function fire() {
   const now = performance.now(), first = now - P.lastShot > 280;
   a.mag--; P.shots++; P.fireCD = (P.fireCD < -0.04 ? 0 : P.fireCD) + 60 / w.rpm * R(0.97, 1.035); P.lastShot = now;
   const speed = Math.hypot(P.vel.x, P.vel.z);
-  let spread = lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : 3) * (P.crouch > 0.5 ? 0.75 : 1);
+  let spread = lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : P.rope ? 1.6 : 3) * (P.crouch > 0.5 ? 0.75 : 1);
   if (w.scope && P.ads < 0.9) spread = w.hip * (1 + speed * 0.25);
   spread += P.kick * 0.02;
   const o = eye();
@@ -1606,6 +1743,25 @@ function ejectCasing(vm) {
 }
 const indoorAt = p => ceilingAt(p.x, p.z, 0.1, p.y + 1.9) < 50;
 
+function weaponTick(dt, sprinting) { // aiming, firing, reloading and recoil: on foot and while hanging from the rope
+  const w = WEAPONS[P.weapon];
+  // aim
+  P.ads = lerp(P.ads, P.adsHeld && !sprinting && P.reloadT <= 0 && P.switchT <= 0 ? 1 : 0, Math.min(1, dt * (w.scope ? 9 : 12)));
+  // timers
+  P.fireCD -= dt;
+  if (P.switchT > 0) P.switchT -= dt;
+  if (P.reloadT > 0) { P.reloadT -= dt; reloadEvents(); if (P.reloadT <= 0) finishReload(); }
+  if (mouseDown && w.shells && P.reloadT > 0 && P.ammo[P.weapon].mag > 0) { P.reloadT = 0; P.rl = null; }
+  if (mouseDown && P.fireCD <= 0 && P.reloadT <= 0 && P.switchT <= 0 && P.sprint < 0.4 && !P.cycle) {
+    fire(); if (!w.auto) mouseDown = false;
+  }
+  if (P.ammo[P.weapon].mag === 0 && P.reloadT <= 0 && P.fireCD <= -0.1 && !mouseDown) startReload();
+  // recoil: springs settle, part of the climb stays (pull down to compensate)
+  P.recP.step(dt); P.recY.step(dt);
+  const cl = P.climb * Math.min(1, dt * 16); P.pitch += cl; P.climb -= cl;
+  P.kick = Math.max(0, P.kick - dt * 6);
+  P.pitch = clamp(P.pitch, -1.5, 1.5);
+}
 function updatePlayer(dt) {
   if (!P.alive) return;
   const w = WEAPONS[P.weapon];
@@ -1646,7 +1802,8 @@ function updatePlayer(dt) {
   else if (P.pos.y - g > 0.05 && P.vel.y <= 0 && P.onGround && P.pos.y - g < STEP) { P.pos.y = g; }
   else if (P.pos.y > g + 0.02) P.onGround = false;
   if (P.pos.y < SWIM_Y && g < SWIM_Y) { startSwim(P.minVy); return; }
-  P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4);
+  if (P.pos.y < -0.4 && isLand(P.pos.x, P.pos.z, -0.5)) { P.pos.y = Math.max(0, groundAt(P.pos.x, P.pos.z, 0.36, 0.5)); P.vel.y = 0; P.onGround = true; } // safety: never under the ground
+  if (!aboard(P.pos)) { P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4); }
 
   // crouch (stand only if room)
   let target = P.crouching ? 1 : 0;
@@ -1659,22 +1816,7 @@ function updatePlayer(dt) {
   P.bobPhase += hs * dt * 1.9;
   P.stepAcc += hs * dt; if (P.onGround && P.stepAcc > (sprinting ? 2.1 : 1.6) * R(0.92, 1.08)) { P.stepAcc = 0; if (!P.crouching) SFX.step(null, sprinting ? 1.2 : 0.8); }
 
-  // aim
-  P.ads = lerp(P.ads, P.adsHeld && !sprinting && P.reloadT <= 0 && P.switchT <= 0 ? 1 : 0, Math.min(1, dt * (w.scope ? 9 : 12)));
-  // timers
-  P.fireCD -= dt;
-  if (P.switchT > 0) P.switchT -= dt;
-  if (P.reloadT > 0) { P.reloadT -= dt; reloadEvents(); if (P.reloadT <= 0) finishReload(); }
-  if (mouseDown && w.shells && P.reloadT > 0 && P.ammo[P.weapon].mag > 0) { P.reloadT = 0; P.rl = null; }
-  if (mouseDown && P.fireCD <= 0 && P.reloadT <= 0 && P.switchT <= 0 && P.sprint < 0.4 && !P.cycle) {
-    fire(); if (!w.auto) mouseDown = false;
-  }
-  if (P.ammo[P.weapon].mag === 0 && P.reloadT <= 0 && P.fireCD <= -0.1 && !mouseDown) startReload();
-  // recoil: springs settle, part of the climb stays (pull down to compensate)
-  P.recP.step(dt); P.recY.step(dt);
-  const cl = P.climb * Math.min(1, dt * 16); P.pitch += cl; P.climb -= cl;
-  P.kick = Math.max(0, P.kick - dt * 6);
-  P.pitch = clamp(P.pitch, -1.5, 1.5);
+  weaponTick(dt, sprinting);
 
   // ammo crates
   for (const c of ammoCrates) {
@@ -1799,7 +1941,7 @@ function updateCamera(dt, t) {
   vm.root.position.copy(pos); vm.root.rotation.set(o.rx, o.ry, o.rz);
   sleeveTo(vm.sleeve, vm.lh.position, vm.anchor);
   if (vm.slide) { P.slideKick = Math.max(0, P.slideKick - dt * 28); const locked = P.ammo[PISTOL].mag === 0 && !(P.rl && P.rl.slideFree); vm.slide.position.z = locked ? 0.03 : 0.026 * Math.sin(Math.min(1, P.slideKick) * Math.PI * 0.5); }
-  vm.root.visible = !(w.scope && P.ads > 0.82) && !P.rope && !P.swim && !P.ladder;
+  vm.root.visible = !(w.scope && P.ads > 0.82) && !P.swim && !P.ladder;
   wCam.fov = lerp(52, w.wfov, P.ads); wCam.updateProjectionMatrix();
   if (vm._flashT > 0) { vm._flashT -= dt; if (vm._flashT <= 0) vm.flash.visible = false; }
   if (vm.dropT > 0) { vm.dropT -= dt; vm.dropV.y -= 6 * dt; vm.dropMag.position.addScaledVector(vm.dropV, dt); vm.dropMag.rotation.x += dt * 3; if (vm.dropT <= 0) vm.dropMag.visible = false; }
@@ -1858,17 +2000,17 @@ class Remote {
       this.pos.copy(a.p).lerp(b.p, k);
       this.yaw = a.y + angDiff(a.y, b.y) * k; this.pitch = lerp(a.pi, b.pi, k); this.crouch = lerp(a.c, b.c, k); this.w = b.w | 0; this.flags = b.f;
     }
-    if (dt > 0) this.vel.lerp(new V3((this.pos.x - this.lastPos.x) / dt, 0, (this.pos.z - this.lastPos.z) / dt), Math.min(1, dt * 10));
+    if (dt > 0) { this.vel.lerp(new V3((this.pos.x - this.lastPos.x) / dt, 0, (this.pos.z - this.lastPos.z) / dt), Math.min(1, dt * 10)); this.vy = lerp(this.vy || 0, clamp((this.pos.y - this.lastPos.y) / dt, -15, 15), Math.min(1, dt * 8)); }
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const vf = -(this.vel.x * sy + this.vel.z * cy), vs = this.vel.x * cy - this.vel.z * sy;
-    const reloading = this.flags & 1, rope = this.flags & 2, sprint = this.flags & 4, aimed = this.flags & 8;
+    const reloading = this.flags & 1, rope = this.flags & 16 ? 2 : this.flags & 2, sprint = this.flags & 4, aimed = this.flags & 8;
     const wantAim = sprint ? 0 : this.bot ? (aimed ? 1 : 0.35) : 1;
     this.aimS = lerp(this.aimS, wantAim, Math.min(1, dt * 6));
     if (reloading && this.reloadStart < 0) this.reloadStart = performance.now();
     if (!reloading) this.reloadStart = -1;
     const rk = this.reloadStart >= 0 ? clamp((performance.now() - this.reloadStart) / 1000 / (WEAPONS[this.w] || WEAPONS[0]).reload, 0, 1) : -1;
     op.g.visible = true; op.g.position.copy(this.pos); op.g.rotation.set(0, this.yaw + Math.PI, 0);
-    poseOperator(op, { vf, vs, crouch: this.crouch, pitch: this.pitch, aim: this.aimS, reload: rk, rope, w: this.w, dt });
+    poseOperator(op, { vf, vs, crouch: this.crouch, pitch: this.pitch, aim: this.aimS, reload: rk, rope, w: this.w, dt, yaw: this.yaw, air: Math.abs(this.vy || 0) > 3.4 && !rope });
     const sp = Math.hypot(this.vel.x, this.vel.z);
     this.stepAcc += sp * dt; if (this.stepAcc > 1.7 && this.crouch < 0.5 && sp > 2.5 && !rope) { this.stepAcc = 0; SFX.step(this.pos, sp > 5.5 ? 1.4 : 1); }
     if (this.tag) { this.tag.visible = true; this.tag.position.set(this.pos.x, this.pos.y + 2.25 - 0.5 * this.crouch, this.pos.z); const d = this.tag.position.distanceTo(camera.position); const sc = clamp(d * 0.035, 0.35, 1.6); this.tag.scale.set(sc * 2.4, sc * 0.6, 1); }
@@ -2152,7 +2294,7 @@ function dieLocal(killerPos, killerName, head) {
 function sendState(dt) {
   sendAcc += dt; if (sendAcc < 0.05) return; sendAcc = 0;
   if (!P.alive) return;
-  const f = (P.reloadT > 0 ? 1 : 0) | (P.rope || P.swim || P.ladder ? 2 : 0) | (P.sprint > 0.5 ? 4 : 0) | (P.ads > 0.5 ? 8 : 0);
+  const f = (P.reloadT > 0 ? 1 : 0) | (P.swim || P.ladder ? 2 : 0) | (P.rope ? 16 : 0) | (P.sprint > 0.5 ? 4 : 0) | (P.ads > 0.5 ? 8 : 0);
   netSend({ t: 'state', p: [+P.pos.x.toFixed(3), +P.pos.y.toFixed(3), +P.pos.z.toFixed(3)], y: +P.yaw.toFixed(3), pi: +P.pitch.toFixed(3), c: +P.crouch.toFixed(2), w: P.weapon, f });
 }
 setInterval(() => { if (online) netSend({ t: 'ping', ts: performance.now() }); }, 2000);
@@ -2234,14 +2376,14 @@ function updateHUD(dt) {
   }
   // crosshair spread
   const speed = Math.hypot(P.vel.x, P.vel.z);
-  const gap = 5 + (lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : 3) + P.kick * 0.02) * 260;
+  const gap = 5 + (lerp(w.hip, w.ads, P.ads) * (1 + speed * 0.25) * (P.onGround ? 1 : P.rope ? 1.6 : 3) + P.kick * 0.02) * 260;
   const cr = $('cross').children; cr[0].style.left = (-gap - 9) + 'px'; cr[1].style.left = gap + 'px'; cr[2].style.top = (-gap - 9) + 'px'; cr[3].style.top = gap + 'px';
-  $('cross').style.opacity = P.alive && !P.rope && !P.swim && !P.ladder ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
+  $('cross').style.opacity = P.alive && !P.swim && !P.ladder ? (w.scope ? 1 - P.ads : 1 - P.ads * 0.9) * (1 - P.sprint) : 0;
   $('scope').style.opacity = w.scope && P.alive ? clamp((P.ads - 0.75) * 5, 0, 1) : 0;
   if (w.scope && P.ads > 0.75) { // scope shadow shifts with recoil and sway, like looking through a real tube
     const sx = clamp(VMS.x.x * 0.25 + P.recY.x * 6 + P.swayX * 40, -5, 5), sy = clamp(VMS.y.x * 0.25 - P.recP.x * 6 + VMS.z.x * 0.2 + P.swayY * 40, -5, 5);
     document.querySelector('#scope .ring').style.transform = `translate(${sx.toFixed(2)}vmin,${sy.toFixed(2)}vmin)`;
-    $('scopeZoom').textContent = P.zoom2 ? '4×' : '10×';
+    $('scopeZoom').textContent = P.zoom2 ? '5.4×' : '13.5×';
     $('scopeBreath').innerHTML = P.breathOut > 0 ? '<b>OUT OF BREATH</b>' : P.holdingBreath ? '<b>HOLDING BREATH</b>' : 'HOLD SHIFT TO STEADY · SCROLL TO ZOOM';
   }
   if (hitT > 0) { hitT -= dt; if (hitT <= 0) $('hit').style.opacity = 0; }
@@ -2345,9 +2487,9 @@ const AIRM = {
   rubber: std({ color: 0x151515, roughness: 0.9 }),
   exhaust: std({ color: 0x1a1612, roughness: 0.8, metalness: 0.4 }),
   nozzleIn: new THREE.MeshStandardMaterial({ color: 0x0b0b0b, emissive: 0xff7a2a, emissiveIntensity: 0.6, roughness: 0.6, side: THREE.DoubleSide }),
-  navR: new THREE.MeshBasicMaterial({ color: new THREE.Color(10, 0.3, 0.2) }),
-  navG: new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 10, 0.6) }),
-  strobe: new THREE.MeshBasicMaterial({ color: new THREE.Color(12, 12, 12) }),
+  navR: new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 0.2, 0.12) }),
+  navG: new THREE.MeshBasicMaterial({ color: new THREE.Color(0.2, 6, 0.4) }),
+  strobe: new THREE.MeshBasicMaterial({ color: new THREE.Color(7, 7, 7) }),
   burner: new THREE.MeshBasicMaterial({ color: new THREE.Color(5, 2.4, 1.0), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
 };
 const ROTOR_BLUR = ctex(256, (g, S) => { const c = S / 2; const gr = g.createRadialGradient(c, c, S * 0.08, c, c, c); gr.addColorStop(0, 'rgba(20,20,20,.0)'); gr.addColorStop(0.15, 'rgba(25,25,25,.55)'); gr.addColorStop(0.9, 'rgba(25,25,25,.4)'); gr.addColorStop(0.96, 'rgba(120,115,70,.18)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, S, S); });
@@ -3097,7 +3239,11 @@ function makeUtilityHeli() { // twin-engine naval utility helicopter, forward = 
 }
 
 const ROPE_N = 17, ROPE_SEG = 0.65, HOVER_Y = 9.85;
-const ropeHeli = { active: false, m: null, t: 0, n: 0, pts: [], prev: [], mesh: null, snd: null, yaw: 0, vel: new V3(), lastPos: new V3(), phase: '' };
+// Two rope helicopters can be out at once: the match's regular visit, and the extraction flight that
+// collects anyone still aboard the cargo ship when it sails (see the dock section).
+function newRopeHeli(kind) { return { kind, active: false, m: null, t: 0, n: 0, pts: [], prev: [], mesh: null, snd: null, yaw: 0, vel: new V3(), lastPos: new V3(), phase: '', canGrab: false, path: null, clock: null }; }
+const ropeHeli = newRopeHeli('visit'), exHeli = newRopeHeli('extract');
+const ROPE_HELIS = [ropeHeli, exHeli];
 function ropeMesh() {
   const m = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.022, 0.022, 1, 8), ropeMaterial(), ROPE_N - 1);
   m.castShadow = true; m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); return m;
@@ -3122,27 +3268,33 @@ function ropeHeliPos(tl, t) {
   if (t < t4) { const u = Math.pow(t / t4, 1.6); return { p: bez(B, new V3(B.x, HOVER_Y + 10, B.z + 25), new V3(lerp(B.x, X.x, 0.5), 50, lerp(B.z, X.z, 0.6)), X, u), ph: 'out' }; }
   return null;
 }
+function launchRopeHeli(H, path, t, yaw) {
+  if (!H.m) { H.m = takeModel('utility'); H.mesh = ropeMesh(); }
+  H.path = path; H.t = t;
+  const s = path(t); if (!s) { H.active = false; return false; }
+  H.active = true; H.phase = s.ph; H.vel.set(0, 0, 0); H.canGrab = false;
+  H.m.g.position.copy(s.p); H.lastPos.copy(s.p); H.yaw = yaw; H.m.g.rotation.set(0, yaw, 0);
+  scene.add(H.m.g, H.mesh);
+  const an = ropeAnchor(H);
+  H.pts = []; H.prev = [];
+  for (let i = 0; i < ROPE_N; i++) { const p = an.clone().add(new V3(0, -i * ROPE_SEG, 0)); H.pts.push(p); H.prev.push(p.clone()); }
+  if (AC) H.snd = rotorSound();
+  return true;
+}
 function startRopeHeli(r) {
   if (ropeHeli.active && ropeHeli.n === r.n) return;
-  stopRopeHeli();
-  if (!ropeHeli.m) { ropeHeli.m = takeModel('utility'); ropeHeli.mesh = ropeMesh(); }
-  ropeHeli.active = true; ropeHeli.n = r.n; ropeHeli.tl = ropeTimeline(r); ropeHeli.t = (r.age || 0) / 1000;
-  const s = ropeHeliPos(ropeHeli.tl, ropeHeli.t); if (!s) { ropeHeli.active = false; return; }
-  ropeHeli.m.g.position.copy(s.p); ropeHeli.lastPos.copy(s.p); ropeHeli.yaw = Math.atan2(ropeHeli.tl.A.x - ropeHeli.tl.E.x, ropeHeli.tl.A.z - ropeHeli.tl.E.z);
-  scene.add(ropeHeli.m.g, ropeHeli.mesh);
-  const an = ropeAnchor();
-  ropeHeli.pts = []; ropeHeli.prev = [];
-  for (let i = 0; i < ROPE_N; i++) { const p = an.clone().add(new V3(0, -i * ROPE_SEG, 0)); ropeHeli.pts.push(p); ropeHeli.prev.push(p.clone()); }
-  if (AC) ropeHeli.snd = rotorSound();
-  if (s.ph === 'in') showPrompt('Helicopter inbound · grab its rope (E) to fly across the compound');
+  stopRopeHeli(ropeHeli);
+  const tl = ropeTimeline(r); ropeHeli.n = r.n; ropeHeli.tl = tl; ropeHeli.clock = null;
+  if (launchRopeHeli(ropeHeli, t => ropeHeliPos(tl, t), (r.age || 0) / 1000, Math.atan2(tl.A.x - tl.E.x, tl.A.z - tl.E.z)) && ropeHeli.phase === 'in')
+    showPrompt('Helicopter inbound · grab its rope (E) to fly across · you can shoot while you hang');
 }
-function stopRopeHeli() {
-  if (!ropeHeli.active) return;
-  ropeHeli.active = false; if (P.rope) releaseRope();
-  scene.remove(ropeHeli.m.g, ropeHeli.mesh);
-  if (ropeHeli.snd) { try { ropeHeli.snd.s.stop(); ropeHeli.snd.o.stop(); ropeHeli.snd.lfo.stop(); } catch (e) { } ropeHeli.snd = null; }
+function stopRopeHeli(H = ropeHeli) {
+  if (!H.active) return;
+  H.active = false; if (P.rope && P.rope.h === H) releaseRope();
+  scene.remove(H.m.g, H.mesh);
+  if (H.snd) { try { H.snd.s.stop(); H.snd.o.stop(); H.snd.lfo.stop(); } catch (e) { } H.snd = null; }
 }
-function ropeAnchor() { const m = ropeHeli.m; m.g.updateMatrixWorld(true); return m.anchor.clone().applyMatrix4(m.g.matrixWorld); }
+function ropeAnchor(H) { const m = H.m; m.g.updateMatrixWorld(true); return m.anchor.clone().applyMatrix4(m.g.matrixWorld); }
 function rotorSound() {
   const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
   const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420; f.Q.value = 1.6;
@@ -3154,33 +3306,34 @@ function rotorSound() {
   if (pan) { g.connect(pan); pan.connect(master); } else g.connect(master);
   s.start(); o.start(); return { s, o, lfo, g, pan };
 }
-function updateRopeHeli(dt) {
-  if (!ropeHeli.active) return;
-  ropeHeli.t += dt;
-  const s = ropeHeliPos(ropeHeli.tl, ropeHeli.t);
-  if (!s) { stopRopeHeli(); return; }
-  const m = ropeHeli.m, prevPh = ropeHeli.phase; ropeHeli.phase = s.ph;
-  const v = s.p.clone().sub(ropeHeli.lastPos).divideScalar(Math.max(dt, 1e-3)); ropeHeli.lastPos.copy(s.p);
-  const acc = v.clone().sub(ropeHeli.vel).divideScalar(Math.max(dt, 1e-3)); ropeHeli.vel.lerp(v, Math.min(1, dt * 4));
-  const hs = Math.hypot(ropeHeli.vel.x, ropeHeli.vel.z);
-  let wantYaw = ropeHeli.yaw;
-  if (hs > 2.5) wantYaw = Math.atan2(ropeHeli.vel.x, ropeHeli.vel.z);
-  const dy = clamp(angDiff(ropeHeli.yaw, wantYaw), -dt * 0.6, dt * 0.6); ropeHeli.yaw += dy;
-  const fwd = new V3(Math.sin(ropeHeli.yaw), 0, Math.cos(ropeHeli.yaw));
-  const pitch = clamp(ropeHeli.vel.dot(fwd) * 0.012 + clamp(acc.dot(fwd), -3, 3) * 0.02, -0.18, 0.25), roll = clamp(-dy / Math.max(dt, 1e-3) * 0.5, -0.3, 0.3);
-  m.g.position.copy(s.p); m.g.rotation.set(0, 0, 0); m.g.rotation.order = 'YXZ'; m.g.rotation.set(pitch, ropeHeli.yaw, roll);
-  m.rotor.rotation.y += dt * 28; m.tail.rotation.x += dt * 70; m.strobe.visible = (ropeHeli.t % 1.1) < 0.08; m.blink.forEach(b => b.visible = (ropeHeli.t % 1.0) < 0.6);
+function updateRopeHeli(H, dt) {
+  if (!H.active) return;
+  if (H.clock) H.t = H.clock(); else H.t += dt;
+  const s = H.path(H.t);
+  if (!s) { stopRopeHeli(H); return; }
+  const m = H.m, prevPh = H.phase; H.phase = s.ph;
+  const v = s.p.clone().sub(H.lastPos).divideScalar(Math.max(dt, 1e-3)); H.lastPos.copy(s.p);
+  if (v.lengthSq() > 250000) v.set(0, 0, 0); // a clock jump, not real speed
+  const acc = v.clone().sub(H.vel).divideScalar(Math.max(dt, 1e-3)); H.vel.lerp(v, Math.min(1, dt * 4));
+  const hs = Math.hypot(H.vel.x, H.vel.z);
+  let wantYaw = H.yaw;
+  if (hs > 2.5) wantYaw = Math.atan2(H.vel.x, H.vel.z);
+  const dy = clamp(angDiff(H.yaw, wantYaw), -dt * 0.6, dt * 0.6); H.yaw += dy;
+  const fwd = new V3(Math.sin(H.yaw), 0, Math.cos(H.yaw));
+  const pitch = clamp(H.vel.dot(fwd) * 0.012 + clamp(acc.dot(fwd), -3, 3) * 0.02, -0.18, 0.25), roll = clamp(-dy / Math.max(dt, 1e-3) * 0.5, -0.3, 0.3);
+  m.g.position.copy(s.p); m.g.rotation.set(0, 0, 0); m.g.rotation.order = 'YXZ'; m.g.rotation.set(pitch, H.yaw, roll);
+  m.rotor.rotation.y += dt * 28; m.tail.rotation.x += dt * 70; m.strobe.visible = (H.t % 1.1) < 0.08; m.blink.forEach(b => b.visible = (H.t % 1.0) < 0.6);
   poseOperator(m.crew, { vf: 0, vs: 0, crouch: 1, pitch: -0.6, aim: 0.15, reload: -1, rope: 0, w: 0, dt });
-  // rope: verlet chain pinned at the hoist, pulled by riders
-  const pts = ropeHeli.pts, prev = ropeHeli.prev, an = ropeAnchor();
+  // rope: verlet chain pinned at the hoist, pulled by riders; it lies on the ground or the ship's deck, never through it
+  const pts = H.pts, prev = H.prev, an = ropeAnchor(H);
   const riders = [];
-  for (const r of remotes.values()) if (r.alive && (r.flags & 2)) riders.push(r.pos.clone().add(new V3(0, 2.05, 0)));
+  for (const r of remotes.values()) if (r.alive && (r.flags & 18)) riders.push(r.pos.clone().add(new V3(0, 2.05, 0)));
   const sub = Math.min(4, Math.ceil(dt / (1 / 120))), h = dt / sub;
   for (let k = 0; k < sub; k++) {
     for (let i = 1; i < ROPE_N; i++) {
       const p = pts[i], q = prev[i], vx = (p.x - q.x) * 0.99, vy = (p.y - q.y) * 0.99, vz = (p.z - q.z) * 0.99;
       q.copy(p); p.x += vx + (Math.random() - 0.5) * 0.0008 * (s.p.y < 20 ? 1 : 0); p.y += vy - 9.8 * h * h; p.z += vz;
-      if (p.y < 0.03) p.y = 0.03;
+      const fl = ropeFloor(p.x, p.z) + 0.03; if (p.y < fl) p.y = fl;
     }
     pts[0].copy(an);
     for (let it = 0; it < 10; it++) {
@@ -3190,53 +3343,66 @@ function updateRopeHeli(dt) {
         a.addScaledVector(d, diff * wa); b.addScaledVector(d, -diff * wb);
       }
       pts[0].copy(an);
-      if (P.rope) pts[P.rope.i].lerp(P.rope.hold, 0.0); // rider follows the rope (below)
     }
   }
   for (const rp of riders) { let bi = 1, bd = 1e9; for (let i = 1; i < ROPE_N; i++) { const d = pts[i].distanceToSquared(rp); if (d < bd) { bd = d; bi = i; } } if (bd < 9) pts[bi].lerp(rp, 0.5); }
   const mm = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new V3(0, 1, 0);
-  for (let i = 0; i < ROPE_N - 1; i++) { const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), L = d.length(); q.setFromUnitVectors(up, d.divideScalar(L || 1)); mm.compose(a.clone().add(b).multiplyScalar(0.5), q, new V3(1, L, 1)); ropeHeli.mesh.setMatrixAt(i, mm); }
-  ropeHeli.mesh.instanceMatrix.needsUpdate = true;
-  // downwash dust
-  if (s.p.y < 22 && Math.random() < 0.55) for (let i = 0; i < 1; i++) {
-    const a = Math.random() * Math.PI * 2, rr = R(1.5, 7), gp = new V3(s.p.x + Math.cos(a) * rr, 0.15, s.p.z + Math.sin(a) * rr);
-    if (gp.z < MAP.z0) continue;
-    smoke.spawn(gp, new V3(Math.cos(a) * R(4, 8), R(0.3, 1.2), Math.sin(a) * R(4, 8)), R(0.7, 1.2), R(0.14, 0.3), new THREE.Color(0xc9bba4), -0.4, false, 1.6); smoke.p[smoke.p.length - 1].grow = true;
+  for (let i = 0; i < ROPE_N - 1; i++) { const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), L = d.length(); q.setFromUnitVectors(up, d.divideScalar(L || 1)); mm.compose(a.clone().add(b).multiplyScalar(0.5), q, new V3(1, L, 1)); H.mesh.setMatrixAt(i, mm); }
+  H.mesh.instanceMatrix.needsUpdate = true;
+  // downwash dust over land, spray over the sea
+  if (s.p.y < 22 && Math.random() < 0.55) {
+    const a = Math.random() * Math.PI * 2, rr = R(1.5, 7), gx = s.p.x + Math.cos(a) * rr, gz = s.p.z + Math.sin(a) * rr, land = isLand(gx, gz), fl = ropeFloor(gx, gz);
+    const gp = new V3(gx, land || fl > 0 ? fl + 0.15 : SEA_Y + 0.1, gz);
+    if (s.p.y - gp.y < 19) { smoke.spawn(gp, new V3(Math.cos(a) * R(4, 8), R(0.3, 1.2), Math.sin(a) * R(4, 8)), R(0.7, 1.2), R(0.14, 0.3), new THREE.Color(land ? 0xc9bba4 : 0xdfe8ea), -0.4, false, 1.6); smoke.p[smoke.p.length - 1].grow = true; }
   }
-  if (ropeHeli.snd) {
+  if (H.snd) {
     const rel = s.p.clone().sub(camera.position), d = rel.length();
-    ropeHeli.snd.g.gain.setTargetAtTime(clamp(95 / (d + 12), 0, 2.4), AC.currentTime, 0.1);
-    if (ropeHeli.snd.pan) { const right = new V3(Math.cos(camera.rotation.y), 0, -Math.sin(camera.rotation.y)); ropeHeli.snd.pan.pan.setTargetAtTime(clamp(rel.normalize().dot(right), -1, 1) * 0.8, AC.currentTime, 0.1); }
-  } else if (AC) ropeHeli.snd = rotorSound();
-  if (P.rope && prevPh === 'hoverB' && s.ph === 'out') releaseRope('Dropped off');
+    H.snd.g.gain.setTargetAtTime(clamp(95 / (d + 12), 0, 2.4), AC.currentTime, 0.1);
+    if (H.snd.pan) { const right = new V3(Math.cos(camera.rotation.y), 0, -Math.sin(camera.rotation.y)); H.snd.pan.pan.setTargetAtTime(clamp(rel.normalize().dot(right), -1, 1) * 0.8, AC.currentTime, 0.1); }
+  } else if (AC) H.snd = rotorSound();
+  if (P.rope && P.rope.h === H && prevPh === 'hoverB' && s.ph === 'out') releaseRope('Dropped off');
 }
 let ropeHintT = 0;
 function ropeGrabCheck() {
-  if (!ropeHeli.active || P.rope || !P.alive) return;
-  const pts = ropeHeli.pts; let best = -1, bd = 0.95;
-  for (let i = 2; i < ROPE_N; i++) { const p = pts[i]; if (p.y < P.pos.y + 0.3 || p.y > P.pos.y + 2.5) continue; const d = Math.hypot(p.x - P.pos.x, p.z - P.pos.z); if (d < bd) { bd = d; best = i; } }
-  ropeHeli.canGrab = best >= 0;
-  if (best >= 0 && performance.now() - ropeHintT > 700) { ropeHintT = performance.now(); showPrompt('Press E to grab the rope'); }
+  if (P.rope || !P.alive) return;
+  for (const H of ROPE_HELIS) {
+    H.canGrab = false; if (!H.active) continue;
+    const pts = H.pts; let best = -1, bd = 0.95;
+    for (let i = 2; i < ROPE_N; i++) { const p = pts[i]; if (p.y < P.pos.y + 0.3 || p.y > P.pos.y + 2.5) continue; const d = Math.hypot(p.x - P.pos.x, p.z - P.pos.z); if (d < bd) { bd = d; best = i; } }
+    H.canGrab = best >= 0;
+    if (best >= 0 && performance.now() - ropeHintT > 700) { ropeHintT = performance.now(); showPrompt('Press E to grab the rope'); }
+  }
 }
-function grabRope() {
-  if (!ropeHeli.canGrab || P.rope) return;
-  const pts = ropeHeli.pts; let bi = 2, bd = 1e9;
-  for (let i = 2; i < ROPE_N; i++) { const d = Math.abs(pts[i].y - (P.pos.y + 2.05)) + Math.hypot(pts[i].x - P.pos.x, pts[i].z - P.pos.z); if (d < bd) { bd = d; bi = i; } }
-  P.rope = { i: bi, hold: new V3() }; P.reloadT = 0; P.rl = null; P.ads = 0; P.crouching = false; mouseDown = false;
-  SFX.mech('pouch'); showPrompt('On the rope · E to let go');
+function grabRope(H, forced) {
+  if (P.rope) return;
+  if (!H) H = ROPE_HELIS.find(h => h.active && h.canGrab);
+  if (!H || !H.active) return;
+  const pts = H.pts; let bi = ROPE_N - 2, bd = 1e9;
+  if (!forced) for (let i = 2; i < ROPE_N; i++) { const d = Math.abs(pts[i].y - (P.pos.y + 2.05)) + Math.hypot(pts[i].x - P.pos.x, pts[i].z - P.pos.z); if (d < bd) { bd = d; bi = i; } }
+  P.rope = { h: H, i: bi, blend: forced ? 0 : 1, from: P.pos.clone() }; P.crouching = false; P.swim = false; P.ladder = null;
+  SFX.mech('pouch'); showPrompt(forced ? 'The crew hooks you onto the rope · hold on' : 'On the rope · you can shoot and reload · E to let go');
 }
 function releaseRope(msg) {
   if (!P.rope) return; P.rope = null; P.onGround = false; P.minVy = Math.min(0, P.vel.y);
   P.vel.x = clamp(P.vel.x, -8, 8); P.vel.z = clamp(P.vel.z, -8, 8); P.vel.y = clamp(P.vel.y, -6, 4);
+  // never let go inside the ground, a roof or a wall
+  const g = groundAt(P.pos.x, P.pos.z, 0.36, P.pos.y + 0.8); if (P.pos.y < g) { P.pos.y = g; P.vel.y = Math.max(0, P.vel.y); }
+  collideCircle(P.pos, 0.36, P.pos.y, P.pos.y + 1.8);
   if (msg) showPrompt(msg);
 }
 function updateRopeRider(dt) {
-  if (!ropeHeli.active) { releaseRope(); return; }
-  const pt = ropeHeli.pts[P.rope.i], target = pt.clone().add(new V3(0, -2.05, 0));
+  const H = P.rope.h;
+  if (!H.active) { releaseRope(); return; }
+  const pt = H.pts[P.rope.i], target = pt.clone(); target.y -= 2.05;
+  // the rope's tail lies on the ground while the helicopter hovers: stand on whatever is under your hands instead of sinking into it
+  const g = groundAt(target.x, target.z, 0.3, pt.y - 0.3); let standing = false;
+  if (target.y < g) { target.y = g; standing = true; }
+  if (target.y < SWIM_Y) target.y = SWIM_Y;
+  if (P.rope.blend < 1) { P.rope.blend = Math.min(1, P.rope.blend + dt / 1.3); target.copy(P.rope.from.clone().lerp(target, smoothK(P.rope.blend))); }
   P.vel.copy(target).sub(P.pos).divideScalar(Math.max(dt, 1e-3)); P.pos.copy(target);
-  P.onGround = false; P.ads = lerp(P.ads, 0, dt * 10); P.sprint = 0; P.bobAmt = 0; P.crouch = lerp(P.crouch, 0, dt * 8);
-  P.recP.step(dt); P.recY.step(dt);
-  if (ropeHeli.phase === 'hoverB' && P.pos.y - groundAt(P.pos.x, P.pos.z, 0.3, P.pos.y + 0.5) < 0.45) releaseRope('Dropped off');
+  P.onGround = false; P.sprint = 0; P.bobAmt = 0; P.crouch = lerp(P.crouch, 0, dt * 8); P.flinch = Math.max(0, P.flinch - dt);
+  weaponTick(dt, false);
+  if (H.phase === 'hoverB' && (standing || P.pos.y - groundAt(P.pos.x, P.pos.z, 0.3, P.pos.y + 0.5) < 0.45)) releaseRope('Dropped off');
 }
 
 // ======================================================= DOCK: east yard, pier, swimming, ladders, quay crane and the cargo ship
@@ -3339,11 +3505,9 @@ function dockYard() {
   const C = (x, z, alongZ, lvl, col) => container(x, z, alongZ, lvl, col);
   // north block by the quay (cover looking out at the pier)
   C(50, -16, false, 0, 1); C(50, -16, false, 1, 4);
-  C(63, -16, false, 0, 2); C(63, -16, false, 1, 3);
   // middle rows
   C(48.5, -3, true, 0, 5); C(48.5, -3, true, 1, 2);
   C(64.5, 0, true, 0, 6); C(64.5, 0, true, 1, 1);
-  C(48, 14, true, 0, 6); C(48, 14, true, 1, 1);
   // loading gantry: a steel deck at container height in the middle of the yard, stairs at both ends
   deck(54, -2.5, 60, 3.5, 2.6, false, ['x0', 'x1']); stairs(57, 7.6, 57, 3.5, 0, 2.6, 1.4, M.steel); stairs(55.2, -6.4, 55.2, -2.5, 0, 2.6, 1.2, M.steel);
   // transit shed in the south-east corner: open front, offices at the back
@@ -3353,12 +3517,12 @@ function dockYard() {
   addBox(65.8, 0, 32, 2.5, 1.0, 1.0, M.olive, { s: 1 }); ammoCrateAt(60, 0, 33.6); ammoCrateAt(51, 0, -10.8);
   for (let i = 0; i < 3; i++) addBox(68.4, 0.8 + i * 1.0, 28, 1.0, 0.06, 5, M.steel, { collide: i === 0 }); addBox(68.4, 0, 28, 1.0, 0.8, 5, M.steel, { s: 1 });
   cableReel(56, -8.5); cableReel(58.2, -8.2, 0.65); pipeStack(56, 18, 6); pipeStack(56.5, 33.5, 5, 2);
-  jersey(44.8, 0, true, 3.2); jersey(53.5, 25, false, 3.2); sandbags(66, -6, 3.2, false); barrel(45, 30, 1); barrel(45.6, 30.6, 2); barrel(44.6, 31.1, 0);
+  jersey(44.8, 0, true, 3.2); barrel(45, 30, 1); barrel(45.6, 30.6, 2); barrel(44.6, 31.1, 0);
   lightTower(44.5, -22.5); lightTower(68.5, 12);
   // gate office
   building({ cx: 46, cz: 33.5, w: 4.4, d: 4.4, h: 2.8, wall: M.whitewash, roof: M.concreteDark, t: 0.2, base: false, doors: [{ side: 'e', off: 0, w: 1.1, h: 2.2 }, { side: 'n', off: 0, w: 1.6, h: 1.0, y0: 1.1 }] });
   // pier: container stacks to hide behind, a small hut, cable reel
-  C(58, -30, true, 0, 4); C(58, -30, true, 1, 0); C(50.5, -56, true, 0, 2); C(50.5, -45, true, 0, 5); C(50.5, -45, true, 1, 3);
+  C(58, -30, true, 0, 4); C(58, -30, true, 1, 0); C(50.5, -45, true, 0, 5);
   building({ cx: 49.5, cz: -28.5, w: 3.6, d: 3.2, h: 2.6, wall: M.wallMetal, roof: M.roof, t: 0.12, base: false, doors: [{ side: 'e', off: 0, w: 1.0, h: 2.1 }, { side: 'n', off: 0, w: 1.4, h: 0.9, y0: 1.2 }] });
   cableReel(51.5, -38.5); pallet(57.8, -38); pallet(57.8, -36.8, 1.2);
   // the compound seawall's railing is rebuilt with gaps at its two ladders (see buildMap); hide spots for bots
@@ -3378,14 +3542,18 @@ function chainMat() {
 
 // ---------------------------------------------------------------- ship + crane (moving)
 const SHIP = { L: 90, B: 15, F: 5.4, D: 7, x: 37.5, zb: -27.6 - 45 }; // berthed: centre x, centre z (bow 0.6 m short of the seawall)
-const SHIP_CYCLE = 540; // s: arrive 0-110, berth 110-260, back out 260-330, turn 330-390, leave 390-470, gone 470-540
+const SHIP_CYCLE = 540; // s: arrive 0-110, berth 110-260 (gangway down, you can board), back out 260-330, turn 330-390, leave 390-470, gone 470-540
 const PIER_C = 55.5; // x of the containers waiting on the pier
+const SHIP_BAYS = [-24.5, -18, -11.5, -5, 1.5, 8, 14.5, 21, 27.5], SHIP_ROWS = [-3.75, -1.25, 1.25, 3.75];
+const PAD_BAYS = [-5, 1.5], PAD_Z = -1.75;                     // two bays stay clear: the winching pad for the helicopter
+const DECK_Y = SHIP.F + 0.12, HATCH_Y = SHIP.F + 0.475;        // ship-local heights (world y = SEA_Y + local)
+const GANG = { z0: 31.3, z1: 33.1, z2: 41.1, x0: 8.6, x1: 9.8 }; // gangway: landing z0..z1 at deck height, steps down to the pier at z2
 const LOAD = [ // ship-local bay (z), row (x), tier the box lands on; pier z and pier level
-  { bay: 31, row: -3.75, tier: 2 }, { bay: 24.5, row: -1.25, tier: 2 }, { bay: 24.5, row: 3.75, tier: 2 }, { bay: 18, row: 1.25, tier: 2 }
+  { bay: 27.5, row: -3.75, tier: 2 }, { bay: 21, row: -1.25, tier: 2 }, { bay: 21, row: 3.75, tier: 2 }, { bay: 14.5, row: 1.25, tier: 2 }
 ];
-LOAD.forEach((s, i) => { s.pz = SHIP.zb + s.bay; s.lvl = i === 1 ? 1 : 0; s.pzz = s.pz; }); // boxes 1 and 2 wait stacked on the pier
+LOAD.forEach((s, i) => { s.pz = SHIP.zb + s.bay; s.lvl = i === 2 ? 1 : 0; s.pzz = s.pz; }); // boxes 1 and 2 wait stacked on the pier
 const MOVE_T = [30, 132, 168, 204]; // start of each container move (move 0 picks early and hangs until the ship berths)
-const port = { ship: null, crane: null, boxes: [], legs: [], hull: null, snd: null, hornAt: -1, shipVis: false, offset: 0 };
+const port = { ship: null, crane: null, boxes: [], legs: [], cols: [], snd: null, hornAt: -1, shipVis: false, offset: 0, active: false, ox: 0, oz: 0, t: 0, stacks: [], warned: -1 };
 function shipKeys(L, B, F, D) {
   return [
     { z: -L / 2, w: B * 0.9, ht: 0.1, hb: D * 0.55, y: F, n: 7, nb: 5 },
@@ -3399,60 +3567,276 @@ function shipKeys(L, B, F, D) {
   ];
 }
 function shipSkin() {
-  return skinTextures(1024, 2048, '#1f3654', {
+  return skinTextures(1024, 2048, '#1c3350', {
     marks(g, W, H) {
+      // hull plating: strakes along the length, butt welds across
+      g.strokeStyle = 'rgba(8,14,22,.35)'; g.lineWidth = 1.2;
+      for (const u of [0.1, 0.14, 0.18, 0.215, 0.785, 0.82, 0.86, 0.9]) { g.beginPath(); g.moveTo(u * W, 0); g.lineTo(u * W, H); g.stroke(); }
+      for (let y = 0; y < H; y += 46) { g.beginPath(); g.moveTo(0.08 * W, y); g.lineTo(0.24 * W, y); g.moveTo(0.76 * W, y); g.lineTo(0.92 * W, y); g.stroke(); }
       for (const side of [1, -1]) {
         const u = side > 0 ? 0.21 : 0.79;
-        const txt = (s, v, size) => { g.save(); g.translate(u * W, (1 - v) * H); g.transform(0, 1, side > 0 ? -1 : 1, 0, 0, 0); g.fillStyle = 'rgba(240,240,236,.95)'; g.font = `700 ${size}px "Arial Narrow", Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(s, 0, 0); g.restore(); };
-        txt('AEGEAN STAR', 0.8, 72); txt('ΑΙΓΑΙΟ ΑΣΤΕΡΙ', 0.3, 56);
+        const txt = (s, v, size, du = 0) => { g.save(); g.translate((u + du * side) * W, (1 - v) * H); g.transform(0, 1, side > 0 ? -1 : 1, 0, 0, 0); g.fillStyle = 'rgba(240,240,236,.95)'; g.font = `700 ${size}px "Arial Narrow", Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(s, 0, 0); g.restore(); };
+        txt('AEGEAN STAR', 0.86, 60); txt('ΑΙΓΑΙΟ ΑΣΤΕΡΙ', 0.1, 44); txt('ΠΕΙΡΑΙΑΣ', 0.1, 26, -0.02);
+        txt('HELLAS  LINES', 0.5, 78, 0.004); // company name along the side, in big letters
         g.fillStyle = 'rgba(230,230,226,.9)'; for (let k = 0; k < 6; k++) g.fillRect((side > 0 ? 0.12 : 0.86) * W, (1 - 0.985) * H + k * 8, 26, 3); // draught marks near the bow
-        g.fillStyle = 'rgba(220,220,215,.85)'; g.fillRect((side > 0 ? 0.233 : 0.757) * W, 0, 6, H); // sheer line
+        g.fillStyle = 'rgba(225,225,220,.9)'; g.fillRect((side > 0 ? 0.233 : 0.757) * W, 0, 7, H); // sheer line
+        // rust weeping down from scuppers and from the anchor pocket, scuffs where fenders rub
+        for (let i = 0; i < 46; i++) {
+          const y = sr() * H, len = SR(40, 150), x0 = (side > 0 ? 0.236 : 0.764) * W;
+          const gr = g.createLinearGradient(x0, 0, x0 - side * len, 0); gr.addColorStop(0, `rgba(128,66,30,${SR(0.25, 0.55)})`); gr.addColorStop(1, 'rgba(128,66,30,0)');
+          g.fillStyle = gr; g.fillRect(side > 0 ? x0 - len : x0, y, len, SR(2, 7));
+        }
+        for (let i = 0; i < 26; i++) { g.fillStyle = `rgba(190,196,200,${SR(0.05, 0.14)})`; g.fillRect((side > 0 ? SR(0.14, 0.2) : SR(0.8, 0.86)) * W, sr() * H, SR(8, 30), SR(20, 120)); }
+        { const y = (1 - 0.955) * H, x0 = (side > 0 ? 0.225 : 0.775) * W, gr = g.createLinearGradient(x0, 0, x0 - side * 190, 0); gr.addColorStop(0, 'rgba(110,55,25,.7)'); gr.addColorStop(1, 'rgba(110,55,25,0)'); g.fillStyle = gr; g.fillRect(side > 0 ? x0 - 190 : x0, y - 14, 190, 28); }
       }
     }
   });
 }
 function containerBox(color) { const m = new THREE.Mesh(CBOX, containerMats[color % containerMats.length]); m.castShadow = true; m.receiveShadow = true; return m; }
 const CBOX = boxGeo(2.44, 2.59, 6.06, 4.8);
+let SHIPM = null;
+function shipMats() {
+  if (SHIPM) return SHIPM;
+  const plate = (base, rust, k = 1) => ctex(512, (g, S) => {
+    g.fillStyle = base; g.fillRect(0, 0, S, S); grain(g, S, 16);
+    blot(g, S, 26, `rgba(0,0,0,${0.16 * k})`, 20, 110); blot(g, S, 18, `rgba(${rust},${0.22 * k})`, 10, 70); blot(g, S, 14, 'rgba(255,255,255,.06)', 20, 90);
+    g.strokeStyle = 'rgba(0,0,0,.28)'; g.lineWidth = 1.5; for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(0, i * S / 4); g.lineTo(S, i * S / 4); g.moveTo(i * S / 4, 0); g.lineTo(i * S / 4, S); g.stroke(); }
+    for (let i = 0; i < 60; i++) { g.fillStyle = `rgba(${rust},${SR(0.15, 0.4) * k})`; g.fillRect(sr() * S, sr() * S, SR(1, 3), SR(6, 40)); }
+  });
+  const tex = (t, r) => { t.repeat.set(r, r); return t; };
+  const decal = (draw, w = 512, h = 512) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); draw(g, w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = maxAniso; return t; };
+  const dm = map => new THREE.MeshStandardMaterial({ map, transparent: true, alphaTest: 0.35, roughness: 0.7, metalness: 0.2, polygonOffset: true, polygonOffsetFactor: -3 });
+  const logo = (txt, sub, col = '#f2f2ee') => dm(decal((g, W, H) => {
+    g.fillStyle = col; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `800 ${txt.length > 7 ? 92 : 120}px "Arial Narrow", Arial, sans-serif`; g.fillText(txt, W / 2, H * 0.4);
+    g.font = '600 34px Arial, sans-serif'; g.fillText(sub, W / 2, H * 0.68);
+    g.fillRect(W * 0.1, H * 0.8, W * 0.8, 6);
+  }, 512, 256));
+  SHIPM = {
+    deck: std({ map: tex(plate('#6e2f25', '70,28,14'), 1), roughness: 0.88, metalness: 0.15 }),
+    hatch: std({ map: tex(plate('#55606a', '110,60,30'), 1), roughness: 0.75, metalness: 0.3 }),
+    white: std({ map: tex(plate('#e9e9e3', '150,90,50', 0.3), 1), roughness: 0.55, metalness: 0.1 }),
+    grey: NAVY.grey, dark: NAVY.dark, win: NAVY.window, orange: NAVY.orange,
+    rail: std({ color: 0xe4e4dc, roughness: 0.5, metalness: 0.4 }),
+    yellow: std({ color: 0xe0b82a, roughness: 0.55, metalness: 0.2 }),
+    red: std({ color: 0xb02a20, roughness: 0.6 }),
+    alu: std({ color: 0xb9bdc0, roughness: 0.4, metalness: 0.8 }),
+    rope: std({ color: 0xcdbb8a, roughness: 0.95 }),
+    lampOn: new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffdca8, emissiveIntensity: 3.2 }),
+    door: dm(decal((g, W, H) => { // container door end: two leaves, four locking bars with handles, placards
+      g.strokeStyle = 'rgba(15,15,15,.75)'; g.lineWidth = 7; g.strokeRect(10, 10, W - 20, H - 20); g.beginPath(); g.moveTo(W / 2, 10); g.lineTo(W / 2, H - 10); g.stroke();
+      for (const x of [0.16, 0.38, 0.62, 0.84]) { g.fillStyle = 'rgba(205,208,210,.95)'; g.fillRect(x * W - 5, 16, 10, H - 32); g.fillStyle = 'rgba(40,40,40,.9)'; g.fillRect(x * W - 9, H * 0.52, 18, 46); g.fillRect(x * W - 9, 30, 18, 14); g.fillRect(x * W - 9, H - 44, 18, 14); }
+      g.fillStyle = 'rgba(240,240,236,.92)'; g.font = '700 30px Arial, sans-serif'; g.fillText('HLNU 204' + (3 + (sr() * 6 | 0)) + ' 7', W * 0.55, 96); g.font = '600 20px Arial, sans-serif'; g.fillText('MAX GROSS 30 480 KG', W * 0.55, 128); g.fillText('TARE  2 250 KG', W * 0.55, 154);
+    })),
+    logos: [logo('HELLAS', 'L I N E S'), logo('AEGEAN', 'CONTAINER SERVICE'), logo('ΠΕΙΡΑΙΑΣ', 'PIRAEUS · GREECE'), logo('MEDCARGO', 'ΕΛΛΑΣ')],
+    pad: new THREE.MeshStandardMaterial({ map: decal((g, W, H) => {
+      g.strokeStyle = '#e8c330'; g.lineWidth = 16; g.beginPath(); g.arc(W / 2, H / 2, W * 0.42, 0, 7); g.stroke();
+      g.strokeStyle = '#f0f0ea'; g.lineWidth = 6; g.setLineDash([26, 18]); g.beginPath(); g.arc(W / 2, H / 2, W * 0.3, 0, 7); g.stroke(); g.setLineDash([]);
+      g.fillStyle = '#f0f0ea'; g.font = '800 250px Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('H', W / 2, H / 2 + 12);
+      g.font = '700 30px Arial, sans-serif'; g.fillStyle = '#e8c330'; g.fillText('WINCH ONLY', W / 2, H * 0.83);
+    }), transparent: true, alphaTest: 0.3, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -4 }),
+    funnel: std({ map: decal((g, W, H) => { // funnel: Aegean blue with the white cross
+      g.fillStyle = '#1b56a0'; g.fillRect(0, 0, W, H); g.fillStyle = '#f1f1ec'; for (let k = 0; k < 4; k++) { const cx = (k + 0.5) * W / 4; g.fillRect(cx - 12, H * 0.25, 24, H * 0.42); g.fillRect(cx - 44, H * 0.4, 88, H * 0.12); }
+      g.fillStyle = '#f1f1ec'; g.fillRect(0, H * 0.78, W, H * 0.07); g.fillStyle = '#111'; g.fillRect(0, 0, W, H * 0.12);
+    }, 512, 256), roughness: 0.5, metalness: 0.2 })
+  };
+  return SHIPM;
+}
+// bake every plain mesh under src into dst as one mesh per material (the ship has hundreds of small parts)
+function mergeInto(dst, src) {
+  src.updateMatrixWorld(true); const groups = new Map();
+  src.traverse(m => {
+    if (!m.isMesh) return;
+    let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); g.applyMatrix4(m.matrixWorld);
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    g.clearGroups(); if (!groups.has(m.material)) groups.set(m.material, []); groups.get(m.material).push(g);
+  });
+  for (const [mat, geos] of groups) { const mesh = new THREE.Mesh(mergeGeometries(geos, false), mat); mesh.castShadow = !mat.transparent; mesh.receiveShadow = true; dst.add(mesh); }
+}
 function makeShip() {
-  const { L, B, F, D } = SHIP, g = new THREE.Group(), skin = shipSkin();
-  am(g, loft(shipKeys(L, B, F, D), 64, 140), hullMaterial(skin.map, skin.bump));
-  am(g, new THREE.BoxGeometry(B * 0.95, 0.12, L * 0.84), NAVY.deck, 0, F + 0.06, 0);
-  // hatch covers and the deck cargo: 6 rows x 10 bays, stacked 1-3 high, instanced per colour (bow bays leave room for the 4 we load)
-  const bays = []; for (let z = -24.5; z <= 31.1; z += 6.5) bays.push(z);
-  for (const z of bays) am(g, new THREE.BoxGeometry(B * 0.86, 0.35, 6.2), NAVY.dark, 0, F + 0.3, z);
-  const per = containerMats.map(() => []), rows = [-6.25, -3.75, -1.25, 1.25, 3.75, 6.25];
-  for (const z of bays) for (const x of rows) {
-    const slot = LOAD.find(s => s.bay === z && s.row === x);
-    const n = slot ? slot.tier : z > 28 ? 1 + (sr() < 0.5 ? 1 : 0) : 1 + Math.floor(sr() * 3);
-    for (let t = 0; t < n; t++) per[Math.floor(sr() * per.length)].push([x, F + 0.48 + 1.295 + t * 2.59, z]);
+  const { L, B, F } = SHIP, g = new THREE.Group(), skin = shipSkin(), S = shipMats(), st = new THREE.Group();
+  am(g, loft(shipKeys(L, B, F, SHIP.D), 64, 140), hullMaterial(skin.map, skin.bump));
+  const bx = (w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0) => am(st, new THREE.BoxGeometry(w, h, d), mat, x, y, z, rx, ry, rz);
+  const cy = (r, h, mat, x, y, z, rx = 0, ry = 0, rz = 0, seg = 12, r2 = r) => am(st, new THREE.CylinderGeometry(r2, r, h, seg), mat, x, y, z, rx, ry, rz);
+  const uvBox = (w, h, d, k = 0.25) => boxGeo(w, h, d, 1 / k);
+  // ---- weather deck (red oxide non-slip), yellow walkway lines, hatch covers with coamings
+  am(st, uvBox(B * 0.95, 0.12, L * 0.875), S.deck, 0, F + 0.06, -1.6);
+  for (const s of [-1, 1]) bx(0.1, 0.01, 66, S.yellow, s * 5.35, DECK_Y + 0.006, 1.5);
+  for (const z of SHIP_BAYS) {
+    am(st, uvBox(B * 0.86, 0.35, 6.2), S.hatch, 0, F + 0.3, z);
+    for (const dz of [-2.05, 0, 2.05]) bx(B * 0.86, 0.03, 0.1, S.dark, 0, HATCH_Y + 0.01, z + dz);
+    for (const s of [-1, 1]) for (const dz of [-2.4, 2.4]) bx(0.18, 0.2, 0.3, S.yellow, s * 6.5, F + 0.3, z + dz); // hatch cleats
   }
-  const mm = new THREE.Matrix4();
+  { const pad = new THREE.Mesh(new THREE.PlaneGeometry(11.5, 11.5).rotateX(-Math.PI / 2), S.pad); pad.position.set(0, HATCH_Y + 0.035, PAD_Z); pad.receiveShadow = true; g.add(pad); }
+  // ---- deck cargo: 4 rows x 9 bays, 0-3 high, instanced per colour. The pad bays stay empty and so do a few slots, to leave lanes.
+  const per = containerMats.map(() => []), hN = new Map(), key = (x, z) => x + ':' + z;
+  for (const z of SHIP_BAYS) for (const x of SHIP_ROWS) {
+    const slot = LOAD.find(q => q.bay === z && q.row === x);
+    const n = PAD_BAYS.includes(z) ? 0 : slot ? slot.tier : sr() < 0.2 ? 0 : 1 + Math.floor(sr() * 3);
+    hN.set(key(x, z), n); if (n) port.stacks.push({ x, z, n });
+    for (let t = 0; t < n; t++) per[Math.floor(sr() * per.length)].push([x, HATCH_Y + 1.295 + t * 2.59, z]);
+  }
+  const mm = new THREE.Matrix4(), q4 = new THREE.Quaternion(), one = new V3(1, 1, 1);
   per.forEach((list, ci) => { if (!list.length) return; const im = new THREE.InstancedMesh(CBOX, containerMats[ci], list.length); list.forEach((p, i) => { mm.makeTranslation(p[0], p[1], p[2]); im.setMatrixAt(i, mm); }); im.castShadow = true; im.receiveShadow = true; g.add(im); });
-  // lashing bridges between bays
-  for (const z of bays) for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.15, 3.5, 0.15), NAVY.grey, s * B * 0.44, F + 1.75, z - 3.25);
-  // accommodation + bridge aft, bridge wings, window band, funnel with blue/white bands, mast and radar
-  const az = -L * 0.38;
-  block(g, NAVY.white, 0, F, az, B * 0.82, 11, 9, 0.95);
-  for (let k = 0; k < 4; k++) for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.06, 0.7, 7.6), NAVY.window, s * B * 0.41, F + 1.6 + k * 2.6, az);
-  am(g, new THREE.BoxGeometry(B * 1.02, 2.6, 4.2), NAVY.white, 0, F + 12.3, az + 2.0);
-  am(g, new THREE.BoxGeometry(B * 0.98, 0.9, 0.08), NAVY.window, 0, F + 12.6, az + 4.12).rotation.x = -0.15;
-  for (let k = 0; k < 5; k++) am(g, new THREE.BoxGeometry(B * 0.7, 0.6, 0.06), NAVY.window, 0, F + 1.6 + k * 2.4, az + 4.53);
-  am(g, new THREE.BoxGeometry(B * 1.04, 0.15, 4.4), NAVY.dark, 0, F + 13.65, az + 2.0);
-  const fun = new THREE.Group(); fun.position.set(0, F + 11, az - 4.2); g.add(fun);
-  am(fun, new THREE.CylinderGeometry(1.8, 2.1, 7, 4, 1), NAVY.white, 0, 3.5, 0).rotation.y = Math.PI / 4;
-  for (const [y, mat] of [[4.6, BLUE_MAT()], [5.6, NAVY.white], [6.5, BLUE_MAT()]]) am(fun, new THREE.CylinderGeometry(1.86, 1.9, 0.7, 4, 1), mat, 0, y, 0).rotation.y = Math.PI / 4;
-  am(fun, new THREE.CylinderGeometry(1.5, 1.5, 0.3, 4, 1), NAVY.dark, 0, 7.05, 0).rotation.y = Math.PI / 4;
-  const radar = mast(g, 0, F + 13.7, az + 1.0, 6);
-  // forecastle bulwark, windlasses, anchor pockets, stern flag, mooring winches
-  am(g, new THREE.BoxGeometry(B * 0.62, 1.4, 6), NAVY.white, 0, F + 1.6, L * 0.44);
-  for (const s of [-1, 1]) { am(g, new THREE.CylinderGeometry(0.5, 0.5, 1.2, 14).rotateZ(Math.PI / 2), NAVY.dark, s * 2.2, F + 2.6, L * 0.42); am(g, new THREE.BoxGeometry(0.2, 1.3, 1.6), NAVY.dark, s * B * 0.27, F - 0.6, L * 0.47); am(g, new THREE.CylinderGeometry(0.4, 0.4, 0.9, 12).rotateZ(Math.PI / 2), NAVY.dark, s * 3, F + 0.6, -L * 0.47); }
-  boatFlag(g, 0, F + 5.2, -L / 2 + 0.6, 2.8); am(g, new THREE.CylinderGeometry(0.06, 0.06, 5, 6), NAVY.dark, 0, F + 2.5, -L / 2 + 0.7);
-  for (const s of [-1, 1]) for (let z = -L * 0.33; z < L * 0.4; z += 2.4) am(g, new THREE.BoxGeometry(0.04, 1.0, 0.04), NAVY.grey, s * B * 0.48, F + 0.5, z);
-  for (const s of [-1, 1]) am(g, new THREE.BoxGeometry(0.05, 0.05, L * 0.75), NAVY.grey, s * B * 0.48, F + 1.0, 0);
-  // navigation lights
-  am(g, new THREE.SphereGeometry(0.18, 8, 6), AIRM.navR, -B * 0.52, F + 12.5, az + 2.5); am(g, new THREE.SphereGeometry(0.18, 8, 6), AIRM.navG, B * 0.52, F + 12.5, az + 2.5);
-  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  return { g, radar };
+  // door ends and company logos on every face you can see
+  const doors = [], logos = S.logos.map(() => []);
+  for (const { x, z, n } of port.stacks) for (let t = 0; t < n; t++) {
+    const y = HATCH_Y + 1.295 + t * 2.59;
+    for (const s of [-1, 1]) {
+      if ((hN.get(key(x, z + s * 6.5)) || 0) <= t && (s > 0) === ((Math.round(x * 4 + z + t) & 1) === 0)) doors.push([x, y, z + s * 3.045, s > 0 ? 0 : Math.PI]);
+      if ((hN.get(key(x + s * 2.5, z)) || 0) <= t) logos[Math.floor(sr() * logos.length)].push([x + s * 1.235, y + 0.25, z, s * Math.PI / 2]);
+    }
+  }
+  const planes = (list, geo, mat) => { if (!list.length) return; const im = new THREE.InstancedMesh(geo, mat, list.length); list.forEach((p, i) => { q4.setFromEuler(new THREE.Euler(0, p[3], 0)); mm.compose(new V3(p[0], p[1], p[2]), q4, one); im.setMatrixAt(i, mm); }); im.receiveShadow = true; g.add(im); };
+  planes(doors, new THREE.PlaneGeometry(2.36, 2.5), S.door); logos.forEach((l, i) => planes(l, new THREE.PlaneGeometry(4.6, 1.7), S.logos[i]));
+  // ---- lashing bridges between the bays: posts, top beam, cross brace, a work light
+  for (const z of SHIP_BAYS.concat(30.75)) {
+    const zz = z - 3.25, low = PAD_BAYS.includes(z) || PAD_BAYS.includes(z - 6.5);
+    for (const s of [-1, 1]) { bx(0.16, low ? 1.1 : 5.6, 0.16, S.grey, s * 5.3, HATCH_Y + (low ? 0.55 : 2.8), zz); if (!low) bx(0.08, 3.1, 0.08, S.grey, s * 6.1, DECK_Y + 1.5, zz, 0, 0, s * 0.55); }
+    if (!low) { bx(10.8, 0.14, 0.5, S.grey, 0, HATCH_Y + 5.65, zz); bx(10.8, 0.05, 0.05, S.rail, 0, HATCH_Y + 6.7, zz - 0.22); bx(10.8, 0.05, 0.05, S.rail, 0, HATCH_Y + 6.7, zz + 0.22); for (const s of [-1, 1]) bx(0.3, 0.16, 0.2, S.lampOn, s * 4.4, HATCH_Y + 5.5, zz); }
+  }
+  // ---- rails: stanchions and three courses, with a gate where the gangway lands (starboard = +x faces the pier)
+  for (const s of [-1, 1]) {
+    for (let z = -41; z <= 36.3; z += 1.85) { if (s > 0 && z > GANG.z0 - 0.1 && z < GANG.z1 + 0.1) continue; bx(0.05, 1.08, 0.05, S.rail, s * 7.05, DECK_Y + 0.54, z); }
+    const runs = s > 0 ? [[-41, GANG.z0], [GANG.z1, 36.3]] : [[-41, 36.3]];
+    for (const [z0, z1] of runs) for (const h of [0.4, 0.74, 1.08]) bx(0.045, 0.045, z1 - z0, S.rail, s * 7.05, DECK_Y + h, (z0 + z1) / 2);
+    for (const h of [0.4, 0.74, 1.08]) { bx(2.4, 0.045, 0.045, S.rail, s * 5.9, DECK_Y + h, 36.3); bx(0.045, 0.045, 0.045, S.rail, s * 7.05, DECK_Y + h, 36.3); }
+    for (let z = -36; z <= 32; z += 11.3) { for (const dz of [-0.35, 0.35]) cy(0.16, 0.5, S.dark, s * 6.55, DECK_Y + 0.25, z + dz, 0, 0, 0, 10, 0.2); cy(0.2, 0.5, S.white, s * 6.6, DECK_Y + 0.25, z + 2.2); am(st, new THREE.SphereGeometry(0.3, 10, 6, 0, 7, 0, 1.6), S.white, s * 6.6, DECK_Y + 0.5, z + 2.2); } // bitts and mushroom vents
+    for (let z = -20; z <= 30; z += 12.5) { bx(0.3, 0.7, 0.5, S.red, s * 6.75, DECK_Y + 0.75, z + 4.6); cy(0.05, 0.9, S.red, s * 6.75, DECK_Y + 0.45, z + 5.1); } // fire stations
+  }
+  for (const h of [0.4, 0.74, 1.08]) bx(14.1, 0.045, 0.045, S.rail, 0, DECK_Y + h, -41);
+  for (let x = -7; x <= 7; x += 1.75) bx(0.05, 1.08, 0.05, S.rail, x, DECK_Y + 0.54, -41);
+  // ---- forecastle: raised deck, windlasses with chain, foremast, anchors in their pockets
+  block(st, S.white, 0, F, 39.6, 9.3, 1.55, 6.6, 0.42);
+  for (const s of [-1, 1]) {
+    cy(0.55, 1.3, S.dark, s * 1.9, F + 2.15, 38.6, 0, 0, Math.PI / 2, 16); cy(0.75, 0.12, S.dark, s * 2.6, F + 2.15, 38.6, 0, 0, Math.PI / 2, 16); bx(0.9, 0.5, 1.2, S.grey, s * 1.9, F + 1.8, 38.6);
+    bx(0.14, 0.1, 2.6, S.dark, s * 1.5, F + 1.62, 40.4, 0, s * 0.18, 0); cy(0.2, 0.3, S.dark, s * 1.15, F + 1.65, 41.7);
+    bx(0.25, 1.5, 1.7, S.dark, s * B * 0.262, F - 0.7, L * 0.47); bx(0.2, 0.3, 1.1, S.dark, s * B * 0.268, F - 1.45, L * 0.47);
+    cy(0.45, 1.0, S.dark, s * 3, F + 0.62, -43.3, 0, 0, Math.PI / 2, 14); bx(1.2, 0.3, 1.0, S.grey, s * 3, F + 0.28, -43.3);
+  }
+  cy(0.12, 6.5, S.white, 0, F + 4.8, 40.8, 0, 0, 0, 10, 0.07); bx(2.2, 0.08, 0.08, S.white, 0, F + 6.6, 40.8); am(st, new THREE.SphereGeometry(0.14, 8, 6), S.lampOn, 0, F + 8.1, 40.8);
+  // ---- accommodation block aft: five decks with real windows, walkways and rails on each deck, lifeboats in davits, stairs
+  const az = -34.2, W = 12.3, Ln = 9, dh = 2.6;
+  am(st, uvBox(W, dh * 4, Ln), S.white, 0, DECK_Y + dh * 2, az);
+  for (let k = 1; k <= 4; k++) {
+    const y = DECK_Y + k * dh, top = k === 4;
+    bx(W + (top ? 2.6 : 1.5), 0.12, Ln + 1.4, S.grey, 0, y, az);
+    for (const s of [-1, 1]) { for (const h of [0.5, 1.0]) bx(0.04, 0.04, Ln + 1.3, S.rail, s * (W / 2 + (top ? 1.25 : 0.7)), y + h, az); for (let z = -5; z <= 5; z += 1.67) bx(0.04, 1.0, 0.04, S.rail, s * (W / 2 + (top ? 1.25 : 0.7)), y + 0.5, az + z); }
+    for (const h of [0.5, 1.0]) bx(W + (top ? 2.5 : 1.4), 0.04, 0.04, S.rail, 0, y + h, az + Ln / 2 + 0.65);
+  }
+  for (let k = 0; k < 4; k++) {
+    const y = DECK_Y + k * dh + 1.55;
+    for (let i = 0; i < 6; i++) { const x = -4.6 + i * 1.84; if (k === 0 && (i === 1 || i === 4)) { bx(0.85, 2.0, 0.07, S.red, x, DECK_Y + 1.0, az + Ln / 2 + 0.02); bx(0.3, 0.3, 0.09, S.win, x, DECK_Y + 1.5, az + Ln / 2 + 0.02); continue; } bx(1.05, 0.85, 0.06, i % 3 === 1 && k < 3 ? S.lampOn : S.win, x, y, az + Ln / 2 + 0.01); bx(1.17, 0.06, 0.1, S.grey, x, y - 0.46, az + Ln / 2 + 0.01); }
+    for (const s of [-1, 1]) for (let i = 0; i < 4; i++) bx(0.06, 0.75, 0.95, (i + k) % 4 === 0 ? S.lampOn : S.win, s * (W / 2 + 0.01), y, az - 3 + i * 2.0);
+    for (let i = 0; i < 5; i++) bx(0.95, 0.75, 0.06, S.win, -3.9 + i * 1.95, y, az - Ln / 2 - 0.01);
+  }
+  // outside stairs zig-zag up the port side, deck to deck
+  for (let k = 0; k < 4; k++) { const dir = k % 2 ? -1 : 1; bx(0.75, 0.08, 4.3, S.grey, -(W / 2 + 0.38), DECK_Y + (k + 0.5) * dh, az, dir * Math.atan2(dh, 3.4), 0, 0); for (const h of [0.9]) bx(0.04, 0.04, 4.3, S.rail, -(W / 2 + 0.72), DECK_Y + (k + 0.5) * dh + h, az, dir * Math.atan2(dh, 3.4), 0, 0); }
+  // wheelhouse with a wrap-around window band, bridge wings, monkey island
+  const by = DECK_Y + 4 * dh;
+  am(st, uvBox(9.6, 2.7, 5.2), S.white, 0, by + 1.41, az + 1.6);
+  bx(9.3, 1.05, 0.07, S.win, 0, by + 1.75, az + 4.2, -0.12); for (let i = -4; i <= 4; i++) bx(0.07, 1.1, 0.09, S.white, i * 1.03, by + 1.75, az + 4.21, -0.12);
+  for (const s of [-1, 1]) { bx(0.07, 1.0, 3.9, S.win, s * 4.81, by + 1.75, az + 2.0); bx(2.6, 1.15, 0.1, S.white, s * 6.1, by + 0.62, az + 4.15); bx(0.1, 1.15, 2.4, S.white, s * 7.38, by + 0.62, az + 3.0); bx(0.5, 1.3, 0.5, S.grey, s * 6.9, by + 0.7, az + 3.3); am(st, new THREE.SphereGeometry(0.2, 8, 6), s < 0 ? AIRM.navR : AIRM.navG, s * 7.45, by + 1.5, az + 3.6); }
+  bx(10.2, 0.14, 5.8, S.dark, 0, by + 2.83, az + 1.6);
+  for (const h of [0.5, 1.0]) { bx(10, 0.04, 0.04, S.rail, 0, by + 2.9 + h, az + 4.4); for (const s of [-1, 1]) bx(0.04, 0.04, 5.6, S.rail, s * 5, by + 2.9 + h, az + 1.6); }
+  for (const [x, r] of [[-3.4, 0.75], [3.4, 0.55]]) { cy(r * 0.5, 0.9, S.white, x, by + 3.35, az + 0.4); am(st, new THREE.SphereGeometry(r, 16, 12), S.white, x, by + 3.9 + r * 0.6, az + 0.4); }
+  for (const x of [-4.4, -2.2, 2.0, 4.5]) cy(0.025, 4.2, S.dark, x, by + 5.0, az + 3.6, 0, 0, 0, 5);
+  bx(1.6, 0.25, 0.5, S.white, 0, by + 3.1, az + 4.1); for (const s of [-1, 1]) am(st, new THREE.SphereGeometry(0.16, 8, 6), S.lampOn, s * 0.5, by + 3.1, az + 4.38);
+  const radar = mast(g, 0, by + 2.9, az + 2.0, 6.5);
+  // funnel behind the wheelhouse: blue with the white cross, black top, exhaust pipes
+  am(st, new THREE.CylinderGeometry(1.75, 2.15, 7.2, 4, 1), S.funnel, 0, by + 3.6, az - 3.0, 0, Math.PI / 4, 0);
+  am(st, new THREE.CylinderGeometry(1.55, 1.55, 0.35, 4, 1), S.dark, 0, by + 7.3, az - 3.0, 0, Math.PI / 4, 0);
+  for (const [x, z, h] of [[-0.45, -0.3, 1.4], [0.45, -0.3, 1.1], [0, 0.45, 0.8]]) cy(0.22, h, AIRM.exhaust, x, by + 7.4 + h / 2, az - 3.0 + z, 0, 0, 0, 10);
+  // free-fall orange lifeboats in davits on both sides, life-raft canisters, a provisions crane
+  for (const s of [-1, 1]) {
+    const lb = am(st, new THREE.SphereGeometry(1, 18, 12), S.orange, s * 7.75, DECK_Y + 2 * dh + 1.35, az - 0.4); lb.scale.set(1.15, 1.05, 3.3);
+    bx(1.5, 0.7, 3.2, S.orange, s * 7.75, DECK_Y + 2 * dh + 2.2, az - 0.2); bx(1.52, 0.3, 1.2, S.win, s * 7.75, DECK_Y + 2 * dh + 2.3, az + 1.3);
+    for (const dz of [-2.4, 1.8]) { bx(0.22, 3.4, 0.22, S.white, s * 6.95, DECK_Y + 2 * dh + 1.8, az - 0.4 + dz, 0, 0, -s * 0.22); bx(1.7, 0.2, 0.2, S.white, s * 7.6, DECK_Y + 2 * dh + 3.45, az - 0.4 + dz); cy(0.02, 1.1, S.dark, s * 7.75, DECK_Y + 2 * dh + 2.9, az - 0.4 + dz, 0, 0, 0, 5); }
+    for (let i = 0; i < 3; i++) cy(0.32, 1.15, S.white, s * (W / 2 + 0.25), DECK_Y + 3 * dh + 0.5, az - 3.2 + i * 0.85, Math.PI / 2, 0, 0, 12);
+    cy(0.5, 0.7, S.orange, s * (W / 2 + 0.3), DECK_Y + dh + 0.45, az + 3.6, 0, 0, 0, 14); // lifebuoy locker
+  }
+  cy(0.3, 4.2, S.yellow, 4.4, DECK_Y + 2.1, -40.0); bx(0.3, 0.3, 5.2, S.yellow, 4.4, DECK_Y + 4.6, -42.2, 0.5); cy(0.015, 2.2, S.dark, 4.4, DECK_Y + 4.5, -44.4, 0, 0, 0, 5);
+  am(st, new THREE.CylinderGeometry(0.06, 0.06, 5, 6), NAVY.dark, 0, F + 2.5, -L / 2 + 0.7);
+  mergeInto(g, st);
+  boatFlag(g, 0, F + 5.2, -L / 2 + 0.6, 2.8);
+  // ---- gangway (down only while alongside): landing at the rail gate, a stepped aluminium ramp to the pier, handrails
+  const gang = new THREE.Group(), gs = new THREE.Group(), GY = 1.9, rise = DECK_Y - GY, run = GANG.z2 - GANG.z1, ang = Math.atan2(rise, run), len = Math.hypot(rise, run), gx = (GANG.x0 + GANG.x1) / 2, gz = (GANG.z1 + GANG.z2) / 2, gy = (DECK_Y + GY) / 2;
+  const gb = (w, h, d, mat, x, y, z, rx = 0) => am(gs, new THREE.BoxGeometry(w, h, d), mat, x, y, z, rx);
+  gb(GANG.x1 - 7.05, 0.1, GANG.z1 - GANG.z0, S.alu, (GANG.x1 + 7.05) / 2, DECK_Y - 0.05, (GANG.z0 + GANG.z1) / 2);
+  for (const sx of [GANG.x0 + 0.04, GANG.x1 - 0.04]) { gb(0.1, 0.34, len, S.alu, sx, gy - 0.1, gz, ang); for (const h of [0.55, 1.05]) gb(0.045, 0.045, len, S.rail, sx, gy + h, gz, ang); }
+  const nSteps = 13;
+  for (let i = 0; i < nSteps; i++) { const k = (i + 0.5) / nSteps, z = GANG.z1 + run * k, y = DECK_Y - rise * (i + 1) / nSteps; gb(GANG.x1 - GANG.x0 - 0.1, 0.05, run / nSteps + 0.02, S.alu, gx, y + 0.005, z); if (i % 3 === 1) for (const sx of [GANG.x0 + 0.04, GANG.x1 - 0.04]) gb(0.045, 1.05, 0.045, S.rail, sx, y + 0.53, z); }
+  for (const h of [0.55, 1.05]) { gb(GANG.x1 - 7.1, 0.045, 0.045, S.rail, (GANG.x1 + 7.1) / 2, DECK_Y + h, GANG.z0 + 0.03); gb(0.045, 0.045, GANG.z1 - GANG.z0, S.rail, GANG.x1 - 0.04, DECK_Y + h, (GANG.z0 + GANG.z1) / 2); gb(GANG.x0 - 7.1, 0.045, 0.045, S.rail, (GANG.x0 + 7.1) / 2, DECK_Y + h, GANG.z1 - 0.03); }
+  for (const [x, z] of [[GANG.x1 - 0.04, GANG.z0 + 0.03], [GANG.x1 - 0.04, GANG.z1], [GANG.x0, GANG.z1 - 0.03]]) gb(0.05, 1.05, 0.05, S.rail, x, DECK_Y + 0.53, z);
+  gb(0.12, 0.12, 2.6, S.alu, 8.0, DECK_Y - 1.0, (GANG.z0 + GANG.z1) / 2); gb(0.1, 2.0, 0.1, S.alu, 8.9, DECK_Y - 1.05, (GANG.z0 + GANG.z1) / 2, 0).rotation.z = -0.9;
+  for (const sx of [GANG.x0 + 0.1, GANG.x1 - 0.1]) am(gs, new THREE.CylinderGeometry(0.13, 0.13, 0.12, 10), AIRM.rubber, sx, GY + 0.13, GANG.z2 - 0.15, 0, 0, Math.PI / 2);
+  // mooring lines to the pier bollards (bow, spring, stern), also only while alongside
+  const line = (x0, y0, z0, x1, y1, z1) => { const a = new V3(x0, y0, z0), b2 = new V3(x1, y1, z1), d = b2.clone().sub(a), Lg = d.length(); const m = am(gs, new THREE.CylinderGeometry(0.035, 0.035, Lg, 6), S.rope, 0, 0, 0); m.position.copy(a).add(b2).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new V3(0, 1, 0), d.normalize()); };
+  const wl = (wx, wy, wz) => [wx - SHIP.x, wy - SEA_Y, wz - SHIP.zb]; // world point (berthed) to ship-local
+  line(4.2, F + 1.5, 42.2, ...wl(46.7, 0.5, -29)); line(7.0, DECK_Y + 0.2, 20, ...wl(46.7, 0.5, -41)); line(7.0, DECK_Y + 0.2, 6, ...wl(46.7, 0.5, -61)); line(7.0, DECK_Y + 0.2, 24, ...wl(46.7, 0.5, -47));
+  mergeInto(gang, gs); g.add(gang);
+  g.traverse(o => { if (o.isMesh && !o.material.transparent) o.castShadow = true; });
+  return { g, radar, gang };
+}
+// Solid parts of the ship in ship-local coordinates: [x0, y0, z0, x1, y1, z1, bullets pass (rails), gangway only]
+function shipSolids() {
+  const out = [], R = DECK_Y + 1.1, GY = 1.9, add = (...a) => out.push(a);
+  add(-7.5, -7, -45, 7.5, DECK_Y, 38.2); add(-4.8, -7, 38.2, 4.8, DECK_Y, 44.2);
+  add(-4.65, DECK_Y, 36.4, 4.65, SHIP.F + 1.55, 43);                                  // forecastle
+  for (const z of SHIP_BAYS) add(-6.45, DECK_Y, z - 3.1, 6.45, HATCH_Y, z + 3.1);      // hatch covers (a low step up)
+  for (const s of port.stacks) add(s.x - 1.22, HATCH_Y, s.z - 3.03, s.x + 1.22, HATCH_Y + s.n * 2.59, s.z + 3.03);
+  add(-6.15, DECK_Y, -38.7, 6.15, DECK_Y + 13.3, -29.7);                               // accommodation
+  add(-7.3, DECK_Y, -41, -7.12, R, 36.4, 1); add(7.12, DECK_Y, -41, 7.3, R, GANG.z0, 1); add(7.12, DECK_Y, GANG.z1, 7.3, R, 36.4, 1);
+  add(-7.3, DECK_Y, -41.15, 7.3, R, -41, 1); add(4.65, DECK_Y, 36.3, 7.3, R, 36.45, 1); add(-7.3, DECK_Y, 36.3, -4.65, R, 36.45, 1);
+  add(7.12, DECK_Y, GANG.z0, 7.3, R, GANG.z1, 1, -1);                                  // the rail gate shuts when the gangway is up
+  add(7.1, DECK_Y - 0.3, GANG.z0, GANG.x1, DECK_Y, GANG.z1, 0, 1);                     // landing
+  const n = 13, rise = DECK_Y - GY, run = GANG.z2 - GANG.z1;
+  for (let i = 0; i < n - 1; i++) add(GANG.x0, GY - 0.4, GANG.z1 + run * i / n, GANG.x1, DECK_Y - rise * (i + 1) / n, GANG.z1 + run * (i + 1) / n, 0, 1);
+  add(7.1, DECK_Y, GANG.z0 - 0.1, GANG.x1 + 0.1, R, GANG.z0, 1, 1); add(GANG.x1, GY, GANG.z0, GANG.x1 + 0.1, R, GANG.z2 - 0.9, 1, 1);
+  add(7.3, DECK_Y, GANG.z1, GANG.x0, R, GANG.z1 + 0.1, 1, 1); add(GANG.x0 - 0.1, GY, GANG.z1, GANG.x0, R, GANG.z2 - 0.9, 1, 1);
+  return out;
+}
+const shipLocal = (x, z, o) => { o.x = x - SHIP.x - port.ox; o.z = z - SHIP.zb - port.oz; return o; };
+const _sl = { x: 0, z: 0 };
+// on the ship (deck, hatch covers, container tops or the gangway landing) while it is alongside or backing out
+function aboard(p) { if (!port.active || p.y < SEA_Y + DECK_Y - 0.7) return false; shipLocal(p.x, p.z, _sl); return _sl.x > -7.6 && _sl.x < 10 && _sl.z > -45.5 && _sl.z < 44.5 && (_sl.x < 7.6 || p.y > SEA_Y + DECK_Y - 0.4); }
+function ropeFloor(x, z) {
+  if (port.active) { shipLocal(x, z, _sl); if (Math.abs(_sl.x) < 7.4 && _sl.z > -45 && _sl.z < 43) return SEA_Y + (Math.abs(_sl.x) < 6.45 && _sl.z > -27.6 && _sl.z < 30.6 ? HATCH_Y : DECK_Y); }
+  return 0;
+}
+function anyAboard() { if (P.alive && aboard(P.pos)) return true; for (const r of remotes.values()) if (r.alive && aboard(r.pos)) return true; return false; }
+// ---- extraction: when the ship sails with people on it, a Navy helicopter follows it out, hovers over the winching pad,
+// takes everyone off on the rope and sets them down in the compound. Timed off the ship's clock so every player sees the same flight.
+const EX0 = 262, EX_HOVER = 16, EX_GO = 54, EX_FORCE = 312, EX_DROP = [8, -10];
+const _ex = new V3();
+const padAt = ts => { shipAt(ts, _ex); return new V3(_ex.x, SEA_Y + HATCH_Y + HOVER_Y, _ex.z + PAD_Z); };
+function extractPath(u) {
+  u = Math.max(0, u);
+  const E = new V3(190, 70, -60);
+  if (u < EX_HOVER) { const A = padAt(EX0 + u), k = 1 - Math.pow(1 - u / EX_HOVER, 2); return { p: bez(E, new V3(120, 45, A.z + 20), new V3(A.x + 28, A.y + 7, A.z + 4), A, k), ph: 'in' }; }
+  if (u < EX_GO) { const A = padAt(EX0 + u), t = u - EX_HOVER; return { p: A.add(new V3(Math.sin(t * 0.7) * 0.25, Math.sin(t * 0.9) * 0.15, Math.cos(t * 0.6) * 0.25)), ph: 'hoverA' }; }
+  const A1 = padAt(EX0 + EX_GO), B = new V3(EX_DROP[0], HOVER_Y, EX_DROP[1]), tT = Math.hypot(B.x - A1.x, B.z - A1.z) / 12 + 3;
+  let t = u - EX_GO;
+  if (t < tT) { const k = smoothK(t / tT), p = A1.lerp(B, k); p.y += 11 * Math.sin(Math.PI * k); return { p, ph: 'transit' }; }
+  t -= tT;
+  if (t < 9) return { p: B.add(new V3(Math.sin(t * 0.8) * 0.2, -0.15 + Math.sin(t) * 0.12, Math.cos(t * 0.7) * 0.2)), ph: 'hoverB' };
+  t -= 9;
+  if (t < 26) { const k = Math.pow(t / 26, 1.6); return { p: bez(B, new V3(B.x, HOVER_Y + 10, B.z + 25), new V3(B.x - 110, 50, B.z + 170), new V3(B.x - 220, 75, 280), k), ph: 'out' }; }
+  return null;
+}
+function updateExtraction(t) {
+  const mine = P.alive && !P.rope && aboard(P.pos);
+  if (mine && port.warned !== 1 && t >= 110 && t < 236) { port.warned = 1; showPrompt(`Aboard the Aegean Star · she sails in ${Math.round(260 - t)} s`); }
+  if (mine && port.warned !== 2 && t >= 236 && t < 258) { port.warned = 2; showBanner('The ship is about to sail', 'Get ashore now, or stay aboard and a helicopter will lift you off', 5000); }
+  if (t < 100) port.warned = -1;
+  if (!exHeli.active && t >= 256 && t < EX_FORCE + 6 && anyAboard()) {
+    exHeli.clock = () => ((Date.now() / 1000 + port.offset) % SHIP_CYCLE + SHIP_CYCLE) % SHIP_CYCLE - EX0;
+    launchRopeHeli(exHeli, extractPath, exHeli.clock(), -Math.PI / 2);
+    if (mine) showBanner('Extraction helicopter inbound', 'Meet it on the winching pad (H) and grab the rope · E', 6000);
+  }
+  if (exHeli.active && mine && t >= EX_FORCE && t < 330 && (exHeli.phase === 'hoverA' || exHeli.phase === 'in')) grabRope(exHeli, true);
+  if (mine && t >= 328.5 && t < 330) { P.pos.set(52, 0.1, -30); P.vel.set(0, 0, 0); showPrompt('A harbour launch brings you back to the pier'); } // last resort, should not happen
 }
 let BLUE_M = null; function BLUE_MAT() { return BLUE_M || (BLUE_M = std({ color: 0x1f5fa8, roughness: 0.5, metalness: 0.2 })); }
 function makeCrane() {
@@ -3537,7 +3921,7 @@ function buildPort() {
     port.boxes.push({ m, col: colliders[colliders.length - 1] });
   }
   for (let k = 0; k < 4; k++) { addCollider(0, 0, 0, 0, 0, 0); port.legs.push(colliders[colliders.length - 1]); }
-  addCollider(SHIP.x - SHIP.B / 2, -9, -67, SHIP.x + SHIP.B / 2, SEA_Y + SHIP.F + 0.3, SHIP.zb + SHIP.L / 2 - 0.3); port.hull = colliders[colliders.length - 1]; port.hull.off = true;
+  for (const d of shipSolids()) { addCollider(0, 0, 0, 0, 0, 0, !!d[6]); const c = colliders[colliders.length - 1]; c.ship = true; c.off = true; port.cols.push({ c, d }); }
   updatePort(0);
 }
 const _sp = new V3();
@@ -3549,7 +3933,17 @@ function updatePort(dt) {
   g.visible = sh.vis;
   g.position.set(_sp.x, SEA_Y + Math.sin(elapsed * 0.5) * 0.05, _sp.z); g.rotation.set(Math.sin(elapsed * 0.4) * 0.003, sh.yaw, Math.sin(elapsed * 0.33) * 0.004);
   port.ship.radar.rotation.y += dt * 1.4;
-  port.hull.off = !(t > 100 && t < 268);
+  { // the ship is solid while it lies alongside and while it backs straight out; whoever stands on it is carried along
+    const active = t >= 110 && t < 330, gangOn = active && t < 258, ox = active ? _sp.x - SHIP.x : 0, oz = active ? _sp.z - SHIP.zb : 0;
+    for (const { c, d } of port.cols) {
+      c.off = !active || (d[7] === 1 && !gangOn) || (d[7] === -1 && gangOn); if (c.off) continue;
+      c.min[0] = SHIP.x + ox + d[0]; c.min[1] = SEA_Y + d[1]; c.min[2] = SHIP.zb + oz + d[2]; c.max[0] = SHIP.x + ox + d[3]; c.max[1] = SEA_Y + d[4]; c.max[2] = SHIP.zb + oz + d[5];
+    }
+    if (active && port.active && P.alive && !P.rope && aboard(P.pos)) { P.pos.x += ox - port.ox; P.pos.z += oz - port.oz; }
+    port.active = active; port.ox = ox; port.oz = oz; port.t = t;
+    port.ship.gang.visible = t >= 106 && t < 258;
+    updateExtraction(t);
+  }
   // crane
   const c = craneAt(t), cr = port.crane;
   cr.g.position.z = c.z;
@@ -3600,7 +3994,7 @@ function updateSwim(dt) {
   P.vel.x = lerp(P.vel.x, (fx * cy + fz * sy) * speed, Math.min(1, dt * 2.5)); P.vel.z = lerp(P.vel.z, (-fx * sy + fz * cy) * speed, Math.min(1, dt * 2.5));
   P.pos.x += P.vel.x * dt; P.pos.z += P.vel.z * dt;
   collideCircle(P.pos, 0.4, P.pos.y, P.pos.y + 1.8);
-  P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4);
+  if (!aboard(P.pos)) { P.pos.x = clamp(P.pos.x, MAP.x0 + 0.4, MAP.x1 - 0.4); P.pos.z = clamp(P.pos.z, MAP.z0 + 0.2, MAP.z1 - 0.4); }
   P.pos.y = SWIM_Y + Math.sin(elapsed * 1.7) * 0.06; P.vel.y = 0; P.onGround = false; P.crouch = lerp(P.crouch, 0, dt * 6);
   const hs = Math.hypot(P.vel.x, P.vel.z);
   P.bobAmt = lerp(P.bobAmt, 0, dt * 6); P.sprint = 0; P.ads = 0; P.fireCD -= dt; P.recP.step(dt); P.recY.step(dt); P.kick = Math.max(0, P.kick - dt * 6);
@@ -3675,7 +4069,7 @@ addEventListener('resize', () => {
 });
 
 // ======================================================= INPUT
-function sens() { const w = WEAPONS[P.weapon]; return 0.0021 * settings.sens * (P.ads > 0.5 ? (w.scope ? 0.3 : 0.65) : 1); }
+function sens() { const w = WEAPONS[P.weapon]; return 0.0021 * settings.sens * (P.ads > 0.5 ? (w.scope ? (P.zoom2 ? 0.26 : 0.21) : 0.65) : 1); }
 addEventListener('mousemove', e => {
   if (gameState !== 'play' || !P.alive) return;
   if (!locked && !(e.buttons & 1)) return;
@@ -3700,9 +4094,8 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!P.alive) return;
   if (e.code === 'KeyE') { if (P.rope) releaseRope(); else grabRope(); }
-  if (P.rope) return;
   if (e.code === 'KeyR') startReload();
-  if (e.code === 'KeyC') P.crouching = !P.crouching;
+  if (e.code === 'KeyC' && !P.rope) P.crouching = !P.crouching;
   if (e.code === 'Digit1') setWeapon(0); if (e.code === 'Digit2') setWeapon(1); if (e.code === 'Digit3') setWeapon(2); if (e.code === 'Digit4') setWeapon(3);
   if (e.code === 'KeyQ') setWeapon(P.prevWeapon);
 });
@@ -3756,8 +4149,8 @@ function trackPerf(raw) { // measure real fps once a second; in Auto, trade reso
   const fps = perf.n / perf.t; perf.fps = Math.round(fps); perf.n = 0; perf.t = 0;
   if (!QUALITY[settings.quality].adaptive || gameState !== 'play') return;
   const now = performance.now();
-  if (fps < 52 && dynScale > 0.55 && now - perf.lastChange > 900) { dynScale = Math.max(0.55, dynScale * (fps < 40 ? 0.8 : 0.88)); perf.lastChange = now; applyPR(); }
-  else if (fps >= 58.5 && dynScale < 1 && now - perf.lastChange > 4000) { dynScale = Math.min(1, dynScale * 1.08); perf.lastChange = now; applyPR(); }
+  if (fps < 52 && dynScale > 0.55 && now - perf.lastChange > 900) { dynScale = Math.max(0.55, dynScale * (fps < 36 ? 0.86 : 0.94)); perf.lastChange = now; applyPR(); }
+  else if (fps >= 58.5 && dynScale < 1 && now - perf.lastChange > 6000) { dynScale = Math.min(1, dynScale * 1.04); perf.lastChange = now; applyPR(); }
 }
 function frame() {
   const raw = clock.getDelta(); trackPerf(raw);
@@ -3776,7 +4169,7 @@ function frame() {
   }
   updateBots(dt);
   for (const r of remotes.values()) r.update(dt);
-  updateRopeHeli(dt);
+  for (const H of ROPE_HELIS) updateRopeHeli(H, dt);
   updateTargets(dt);
   updateFlybys(dt); updateMissiles(dt); updateShells(dt); updateFlags(elapsed); updateBoats(dt, elapsed); updateBoatFlags(elapsed); updatePort(dt);
   sparks.update(dt); debris.update(dt); smoke.update(dt); updateTracers(dt);
@@ -3790,7 +4183,7 @@ function frame() {
 
 // ======================================================= BOOT
 buildMap();
-botCtx.nav = new NavGrid(colliders.concat(WATER_BLOCKS), MAP);
+botCtx.nav = new NavGrid(colliders.filter(c => !c.ship).concat(WATER_BLOCKS), MAP);
 buildTargets();
 setupPost();
 prewarm();
@@ -3831,7 +4224,7 @@ function showJoinBox() {
 function hostNote(info) {
   const lan = info.lan && info.lan.length ? `<br>Same Wi-Fi: the other Mac can also open <b style="color:var(--amber);user-select:all">http://${info.lan[0]}:${info.port}</b>` : '';
   const o = info.online || {};
-  if (o.state === 'ready') return `<b style="color:var(--ink)">You are hosting.</b> Send the other player this <b>join code</b>:<br><span class="code">${esc(o.code)}</span> <button class="btn2" type="button" id="copyinv" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>They open <b style="user-select:all">${esc(o.url)}</b> in Chrome or Safari (or type the code into the Join box of their Tidebreak).${lan}`;
+  if (o.state === 'ready') return `<b style="color:var(--ink)">You are hosting.</b> Send the other players (up to 3) this <b>join code</b>:<br><span class="code">${esc(o.code)}</span> <button class="btn2" type="button" id="copyinv" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>They open <b style="user-select:all">${esc(o.url)}</b> in Chrome or Safari (or type the code into the Join box of their Tidebreak).${lan}`;
   if (o.state === 'starting' || o.state === 'linking' || o.state === 'download') return `<b style="color:var(--ink)">You are hosting.</b> ${esc(o.msg || 'Getting a join code…')}${lan}`;
   if (o.state === 'failed') return `<b style="color:var(--ink)">You are hosting.</b> <span style="color:#ff8a7a">${esc(o.msg || 'Internet play is not available.')}</span>${lan}`;
   return `<b style="color:var(--ink)">You are hosting.</b>${lan || ' Internet play is off.'}`;
@@ -3875,7 +4268,7 @@ function showWebLobby() {
   webMode = true;
   $('webbox').hidden = false;
   setStatus('Host a match or join one with a code. Deploy alone opens the practice range.', 'ok');
-  $('hostnote').innerHTML = 'Both players open this website. One clicks <b>Host a match</b> and reads out the code; the other types it and clicks <b>Join</b>. Keep the host\'s window open while you play.';
+  $('hostnote').innerHTML = '<b style="color:var(--ink)">Up to 4 players, one code.</b> Everyone opens this website from anywhere. One player clicks <b>Host a match</b> and shares the code; the other three type that same code and click <b>Join</b>. Keep the host\'s window open while you play.';
   const hb = $('hostbtn'), jb = $('webjoinbtn'), inp = $('webcode'), msg = $('webmsg');
   const lock = on => { hb.disabled = on; jb.disabled = on; inp.disabled = on; };
   const fromHash = P2P.normCode((location.hash || '').replace(/^#(join=)?/, ''));
@@ -3888,9 +4281,9 @@ function showWebLobby() {
   hb.onclick = async () => {
     lock(true); msg.className = ''; msg.textContent = 'Getting a match code…';
     try {
-      const code = await P2P.host(() => { msg.innerHTML = codeHtml(code) + '<br><b style="color:var(--ink)">A player joined.</b> Click Deploy if you have not yet.'; });
+      const code = await P2P.host(() => { msg.innerHTML = codeHtml(code) + '<br><b style="color:var(--ink)">A player joined.</b> The same code works for up to 4 players. Click Deploy if you have not yet.'; });
       const link = location.origin + location.pathname + location.search + '#' + code;
-      const codeHtml = c => `Your match code: <span class="code">${esc(c)}</span> <button class="btn2" type="button" id="copyweb" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>The other player opens <b style="user-select:all">${esc(link)}</b> or types the code and clicks Join.`;
+      const codeHtml = c => `Your match code: <span class="code">${esc(c)}</span> <button class="btn2" type="button" id="copyweb" style="padding:6px 10px;font-size:12px;vertical-align:middle">Copy invite</button><br>Up to 3 more players open <b style="user-select:all">${esc(link)}</b> or type this code and click Join.`;
       msg.innerHTML = codeHtml(code) + '<br>Click <b>Deploy</b> to drop in while you wait.';
       document.addEventListener('click', e => { if (e.target && e.target.id === 'copyweb') { const b = e.target; const txt = `Tidebreak! Open ${link} (match code ${code})`; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => { b.textContent = 'Copied'; }, () => { b.textContent = 'Select the code to copy'; }); } });
       setStatus('You are hosting match ' + code + '. Pick the mode and bots, then Deploy.', 'ok'); updateHostUI();
@@ -3910,4 +4303,4 @@ function showWebLobby() {
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
 }
 requestAnimationFrame(frame);
-window.__tb = { provoke, shotAtVehicles, missiles, shells, port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };
+window.__tb = { makeOperator, poseOperator, provoke, shotAtVehicles, missiles, shells, port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, exHeli, aboard, grabRope, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet };
