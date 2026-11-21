@@ -172,7 +172,8 @@ class Water extends Mesh {
 
 					float distance = length(worldToEye);
 
-					vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;
+					// reflections wobble with the swell, but never tear into flashing streaks right under the camera
+					vec2 distortion = surfaceNormal.xz * ( 0.001 + min( 1.0 / distance, 0.045 ) ) * distortionScale;
 					vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );
 
 					float theta = max( dot( eyeDirection, surfaceNormal ), 0.0 );
@@ -192,8 +193,9 @@ class Water extends Mesh {
 					vec3 bodyLit = body * ( 0.9 + 0.12 * up ) + sunColor * diffuseLight * 0.012 + scatter * 0.06;
 					vec3 albedo = mix( bodyLit, reflectionSample, clamp( fres * 0.8, 0.0, 0.5 ) ) + reflectionSample * specularLight * 0.35 + sunColor * specularLight * 0.35;
 					// sun glitter: tiny sharp glints on top of the broad highlight
-					vec3 rS = normalize( reflect( -sunDirection, normalize( surfaceNormal * vec3( 2.2, 1.0, 2.2 ) ) ) );
-					albedo += sunColor * pow( max( 0.0, dot( eyeDirection, rS ) ), 900.0 ) * 3.0;
+					// kept broad and gentle: pin-sharp glints pop on and off from one frame to the next and read as flicker
+					vec3 rS = normalize( reflect( -sunDirection, normalize( surfaceNormal * vec3( 1.35, 1.0, 1.35 ) ) ) );
+					albedo += sunColor * pow( max( 0.0, dot( eyeDirection, rS ) ), 260.0 ) * 0.55 * smoothstep( 4.0, 22.0, distance );
 					// lapping foam where the water meets the quay walls and the pier
 					float fN = noise.x * 0.5 + 0.5;
 					float lap = ( 1.0 - smoothstep( 0.0, 2.4, dLand ) ) * smoothstep( 0.35, 0.9, fN + 0.35 * sin( dLand * 3.5 - time * 6.0 ) );
