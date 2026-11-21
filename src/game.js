@@ -293,7 +293,7 @@ const M = {
   winGlow: new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffb36b, emissiveIntensity: 2.6, roughness: 0.2, metalness: 0.5 }),
   lamp: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xfff0d0, emissiveIntensity: 5.5 }),
   red: new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 0.3, 0.2) }),
-  stripe: std({ color: 0xd8c25a, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 }),
+  stripe: std({ color: 0xd8c25a, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   water: std({ color: 0x0c2630, roughness: 0.16, metalness: 0.0, normalMap: T.waterN, normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 1.5 }),
   dirt: std({ map: T.asphalt, color: 0x9a8a6a, roughness: 1 }),
   whitewash: std({ map: T.whitewash, roughness: 0.9 }),
@@ -366,6 +366,13 @@ function plasterGeo(w, h, d, r = 0.22, s = 3) {
   for (let fI = 0; fI < 6; fI++) for (let k = 0; k < per; k++) { const j = fI * per + k; uv.setXY(j, uv.getX(j) * faceDims[fI][0] / s, uv.getY(j) * faceDims[fI][1] / s); }
   g.dispose(); _pbCache.set(key, sub); return sub;
 }
+function eyeClear() { // true when no collider, player, rope, ladder or water is close enough for a 0.25 m near plane to cut into it
+  const e = camera.position, R = 0.62;
+  if (!P.alive || P.swim || P.rope || P.ladder || e.y < 1.0 && !isLand(e.x, e.z)) return false;
+  for (const c of colliders) { if (c.off) continue; const dx = Math.max(c.min[0] - e.x, 0, e.x - c.max[0]), dy = Math.max(c.min[1] - e.y, 0, e.y - c.max[1]), dz = Math.max(c.min[2] - e.z, 0, e.z - c.max[2]); if (dx < R && dy < R && dz < R && dx * dx + dy * dy + dz * dz < R * R) return false; }
+  for (const r of remotes.values()) if (r.alive && e.distanceToSquared(r.pos) < 9) return false;
+  return true;
+}
 function addCollider(x0, y0, z0, x1, y1, z1, noRay = false) { colliders.push({ noRay, min: [Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1)], max: [Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)] }); }
 let noCastScope = false; // scenery outside the shadow area
 function place(geo, mat, x, y, z, o = {}) {
@@ -435,7 +442,7 @@ function container0(x, z, alongZ, level, color) {
     place(cyl(0.025, H - 0.25, 6), M.steelLight, bx, y0 + H / 2, bz);
   }
   // top & bottom rails
-  for (const yy of [y0 + 0.06, y0 + H - 0.06]) addBox(x, yy - 0.06, z, w + 0.04, 0.12, d + 0.04, M.steel, { collide: false });
+  addBox(x, y0, z, w + 0.04, 0.12, d + 0.04, M.steel, { collide: false }); addBox(x, y0 + H - 0.12, z, w + 0.04, 0.135, d + 0.04, M.steel, { collide: false });
 }
 
 function crate(x, y, z, s = 1.1, ry = 0) { addBox(x, y, z, s, s, s, M.wood, { s, ry }); }
@@ -469,7 +476,7 @@ function floodlight(x, z, tx, tz, h = 9) {
   const head = new V3(x, h, z), tgt = new V3(tx, 0, tz);
   const dir = tgt.clone().sub(head).normalize();
   const hm = place(boxGeo(0.9, 0.5, 0.35, 1), M.steel, x, h, z); hm.lookAt(tgt);
-  const lens = place(new THREE.PlaneGeometry(0.75, 0.38), M.lamp, x + dir.x * 0.19, h + dir.y * 0.19, z + dir.z * 0.19, { cast: false }); lens.lookAt(tgt.clone().add(dir));
+  const lens = place(new THREE.PlaneGeometry(0.75, 0.38), M.lamp, x + dir.x * 0.21, h + dir.y * 0.21, z + dir.z * 0.21, { cast: false }); lens.lookAt(tgt.clone().add(dir));
   const sp = new THREE.SpotLight(0xffe2b8, 170, 34, 0.62, 0.55, 2);
   sp.position.copy(head).addScaledVector(dir, 0.3); sp.target.position.copy(tgt);
   scene.add(sp, sp.target);
@@ -614,7 +621,7 @@ function buildMap() {
   noCastScope = true; village(); noCastScope = false;
   // flags: warehouse roof, seawall, painted wall flag
   wavingFlag(0, 6.37, 0, 9, 2.6, 1.7); wavingFlag(-38, 0, -23.4, 8, 2.2, 1.45); wavingFlag(38, 0, -23.4, 8, 2.2, 1.45);
-  { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 3), new THREE.MeshStandardMaterial({ map: T.flag, roughness: 0.95, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2 })); m.position.set(-14, 2.3, 37.99); m.rotation.y = Math.PI; scene.add(m); }
+  { const m = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 3), new THREE.MeshStandardMaterial({ map: T.flag, roughness: 0.95, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); m.position.set(-14, 2.3, 37.99); m.rotation.y = Math.PI; scene.add(m); }
 
   mergeStatic();
   buildPort();
@@ -837,12 +844,13 @@ function vWindow(x, y, z, nx, nz, w, h, shut, lit) {
   const V = vmats(), side = nx !== 0, o = (dx, dz) => [x + dx * (side ? 0 : 1) + nx * dz, z + nz * dz + (side ? dx : 0)];
   const bw = (a, b) => side ? [0.0001 + b, a] : [a, 0.0001 + b];
   const box = (mat, wid, hh, dep, dx, dy, out) => { const [px, pz] = o(dx, out); const [ww, dd] = bw(wid, dep); place(boxGeo(ww, hh, dd, 1), mat, px, y + dy, pz, { cast: false }); };
+  // each layer sits at least 3 cm in front of the one behind it and none share a face: closer layers flicker from far away
   box(V.trim, w + 0.24, h + 0.24, 0.06, 0, 0, 0.03);                 // surround
-  box(lit ? M.winGlow : V.recess, w, h, 0.07, 0, 0, 0.045);           // glass / dark room behind
   box(V.trim, w + 0.36, 0.08, 0.2, 0, -h / 2 - 0.12, 0.1);            // sill
-  box(V.trim, 0.05, h, 0.09, 0, 0, 0.05);                             // mullion
-  if (shut === 'open') for (const s of [-1, 1]) box(shutMat, w / 2, h, 0.05, s * (w / 2 + 0.14 + w / 4), 0, 0.07);
-  else if (shut === 'closed') { box(shutMat, w, h, 0.06, 0, 0, 0.09); for (let i = 1; i < 6; i++) box(V.recess, w * 0.9, 0.018, 0.065, 0, -h / 2 + i * h / 6, 0.1); }
+  if (shut === 'closed') { box(shutMat, w, h, 0.1, 0, 0, 0.075); for (let i = 1; i < 6; i++) box(V.recess, w * 0.9, 0.018, 0.03, 0, -h / 2 + i * h / 6, 0.125); return; }
+  box(lit ? M.winGlow : V.recess, w, h, 0.07, 0, 0, 0.06);            // glass / dark room behind
+  box(V.trim, 0.05, h - 0.03, 0.05, 0, 0, 0.105);                     // mullion
+  if (shut === 'open') for (const s of [-1, 1]) box(shutMat, w / 2, h - 0.02, 0.11, s * (w / 2 + 0.14 + w / 4), 0, 0.08);
 }
 let shutMat = null;
 function greekHouse(x, y, z, w, d, h) { // a Cycladic house facing the harbour (-z), with roof clutter and plants
@@ -858,10 +866,10 @@ function greekHouse(x, y, z, w, d, h) { // a Cycladic house facing the harbour (
   // door: surround, recessed leaf, step, handle, little fanlight
   const dx = x + SR(-w * 0.28, w * 0.05);
   place(boxGeo(1.3, 2.45, 0.08, 1), V.trim, dx, y + 1.22, fz - 0.04, { cast: false });
-  place(boxGeo(0.98, 2.12, 0.05, 1), door, dx, y + 1.06, fz - 0.05, { cast: false });
-  for (const yy of [0.55, 1.55]) place(boxGeo(0.8, 0.04, 0.02, 1), V.recess, dx, y + yy, fz - 0.085, { cast: false });
-  place(new THREE.SphereGeometry(0.04, 6, 4), V.brass, dx + 0.36, y + 1.05, fz - 0.1, { cast: false });
-  place(boxGeo(0.9, 0.22, 0.04, 1), sr() < 0.5 ? M.winGlow : V.recess, dx, y + 2.28, fz - 0.06, { cast: false });
+  place(boxGeo(0.98, 2.12, 0.05, 1), door, dx, y + 1.06, fz - 0.095, { cast: false });
+  for (const yy of [0.55, 1.55]) place(boxGeo(0.8, 0.04, 0.03, 1), V.recess, dx, y + yy, fz - 0.135, { cast: false });
+  place(new THREE.SphereGeometry(0.04, 6, 4), V.brass, dx + 0.36, y + 1.05, fz - 0.14, { cast: false });
+  place(boxGeo(0.9, 0.22, 0.04, 1), sr() < 0.5 ? M.winGlow : V.recess, dx, y + 2.28, fz - 0.1, { cast: false });
   addBox(dx, y, fz - 0.32, 1.5, 0.16, 0.6, V.trim, { collide: false, s: 1 });
   // windows: ground floor beside the door, a row upstairs
   for (let f = 0; f < floors; f++) {
@@ -887,7 +895,7 @@ function greekHouse(x, y, z, w, d, h) { // a Cycladic house facing the harbour (
     place(plasterGeo(uw, uh + 0.2, ud, 0.22), wall, ux, y + h + uh / 2 + 0.1, uz);
     place(plasterGeo(uw + 0.1, 0.4, ud + 0.1, 0.16), wall, ux, y + h + uh + 0.17, uz);
     place(plasterGeo(uw + 0.16, 0.1, ud + 0.16, 0.04, 2), V.trim, ux, y + h + uh + 0.4, uz, { cast: false });
-    place(boxGeo(0.85, 1.9, 0.06, 1), door, ux + SR(-uw * 0.2, uw * 0.2), y + h + 0.95, uz - ud / 2 - 0.03, { cast: false });
+    place(boxGeo(0.85, 1.9, 0.08, 1), door, ux + SR(-uw * 0.2, uw * 0.2), y + h + 0.95, uz - ud / 2 - 0.03, { cast: false });
     for (let k = 0; k <= 10; k++) addBox(x - w / 2 + 0.15 + k * (w - 0.3) / 10, top, fz + 0.15, 0.04, 0.8, 0.04, V.blue, { collide: false });
     addBox(x, top + 0.8, fz + 0.15, w - 0.3, 0.06, 0.06, V.blue, { collide: false });
     if (sr() < 0.5) { for (const [px, pz] of [[x + w * 0.3, fz + 0.5], [x + w * 0.3, fz + 1.8]]) addBox(px, top, pz, 0.08, 2.0, 0.08, M.wood, { collide: false }); addBox(x + w * 0.3, top + 2.0, fz + 1.1, 1.8, 0.08, 1.8, M.wood, { collide: false }); for (let k = 0; k < 3; k++) place(new THREE.IcosahedronGeometry(SR(0.35, 0.6), 0), V.leaf, x + w * 0.3 + SR(-0.8, 0.8), top + 2.1, fz + 1.1 + SR(-0.8, 0.8), { cast: false }); }
@@ -992,12 +1000,12 @@ function village() {
   // terraced hillside rising to the south: stone retaining walls, earth on top, whitewashed lanes and steps
   for (let row = 0; row < 6; row++) {
     const z = 46 + row * 9, y = row * 3.2;
-    addBox(0, -0.2, z + 4.5, 190, y + 0.2, 9, V.earth, { collide: false, s: 6 });
+    if (row) addBox(0, -0.2, z + 4.65, 189.8, y + 0.2, 8.7, V.earth, { collide: false, s: 6 }); else addBox(0, -0.2, z + 4.5, 190, 0.185, 9, V.earth, { collide: false, s: 6 }); // behind the stone face, never flush with it
     if (row) { addBox(0, y - 3.2, z + 0.3, 190, 3.2, 0.6, M.stone, { collide: false, s: 3 }); addBox(0, y, z + 0.3, 190, 0.18, 0.75, V.trim, { collide: false, s: 2 }); }
-    addBox(0, y, z + 1.0, 190, 0.04, 1.6, M.concrete, { collide: false, s: 3 }); // lane along the terrace
+    addBox(0, y, z + 1.0, 189.9, 0.04, 1.6, M.concrete, { collide: false, s: 3 }); // lane along the terrace
     for (const sx of [-52, -18, 14, 46]) if (row) { // steps up between rows
-      const sx2 = sx + row * 3; for (let k = 0; k < 10; k++) addBox(sx2, y - 3.2, z + 0.3 - (10 - k) * 0.3 + 0.15, 1.6, (k + 1) * 0.32, 0.3, M.concrete, { collide: false, s: 1 });
-      for (const s of [-1, 1]) addBox(sx2 + s * 0.88, y - 3.2, z - 1.2, 0.16, 3.4, 3.0, V.trim, { collide: false, s: 1 });
+      const sx2 = sx + row * 3; for (let k = 0; k < 10; k++) addBox(sx2, y - 3.2, z - (10 - k) * 0.3 + 0.15, 1.6, (k + 1) * 0.32, 0.3, M.concrete, { collide: false, s: 1 });
+      for (const s of [-1, 1]) addBox(sx2 + s * 0.88, y - 3.2, z - 1.35, 0.16, 3.4, 3.3, V.trim, { collide: false, s: 1 });
     }
     const stepXs = row < 5 ? [-52, -18, 14, 46].map(v => v + (row + 1) * 3) : [];
     for (let x = -88; x < 88;) {
@@ -1085,7 +1093,7 @@ function truck(x, z) { // long axis along x, cab at +x
   // exhaust stack, air filter, fuel tank, battery box
   place(cyl(0.07, 1.9, 10), TM.dark, x + 0.78, 2.15, z + 1.0); place(cyl(0.09, 0.16, 10), M.steel, x + 0.78, 3.15, z + 1.0);
   place(new THREE.CylinderGeometry(0.28, 0.28, 1.1, 16).rotateZ(Math.PI / 2), P, x + 0.2, 0.98, z - 1.0);
-  box(0.2, 0.7, 1.0, 0.8, 0.45, 0.4, TM.dark);
+  box(0.2, 0.7, 1.02, 0.8, 0.45, 0.44, TM.dark);
   // spare wheel behind the cab
   place(TYRE_GEO, TM.tyre, x + 0.62, 2.0, z, { ry: Math.PI / 2 });
   // cargo bed with dropsides
@@ -1093,11 +1101,11 @@ function truck(x, z) { // long axis along x, cab at +x
   for (const s of [-1, 1]) { box(-1.3, 0.91, s * 1.19, 5.4, 0.6, 0.05, P); for (let i = 0; i < 6; i++) box(-3.9 + i * 1.04, 0.91, s * 1.22, 0.06, 0.6, 0.04, TM.dark); }
   box(-4.0, 0.75, 0, 0.06, 0.76, 2.4, P);
   // canvas tilt: walls, rounded roof over hoops, straps, tailgate flap rolled up
-  for (const s of [-1, 1]) box(-1.3, 1.5, s * 1.17, 5.3, 1.05, 0.04, TM.canvas);
-  box(0.0 + 1.33, 1.5, 0, 0.04, 1.05, 2.34, TM.canvas);
-  { const roofG = new THREE.CylinderGeometry(1.17, 1.17, 5.3, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); roofG.scale(1, 0.42, 1); place(roofG, TM.canvas, x - 1.3, 2.55, z); }
-  for (let i = 0; i < 5; i++) { const g = new THREE.CylinderGeometry(1.19, 1.19, 0.07, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); g.scale(1, 0.42, 1); place(g, TM.dark, x - 3.8 + i * 1.25, 2.55, z, { cast: false }); }
-  for (let i = 0; i < 7; i++) for (const s of [-1, 1]) box(-3.85 + i * 0.85, 1.55, s * 1.2, 0.04, 0.9, 0.02, TM.dark);
+  for (const s of [-1, 1]) box(-1.56, 1.5, s * 1.17, 4.78, 1.05, 0.04, TM.canvas);
+  box(0.81, 1.5, 0, 0.04, 1.05, 2.34, TM.canvas);
+  { const roofG = new THREE.CylinderGeometry(1.17, 1.17, 4.78, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); roofG.scale(1, 0.42, 1); place(roofG, TM.canvas, x - 1.56, 2.55, z); }
+  for (let i = 0; i < 5; i++) { const g = new THREE.CylinderGeometry(1.19, 1.19, 0.07, 20, 1, true, 0, Math.PI).rotateZ(Math.PI / 2); g.scale(1, 0.42, 1); place(g, TM.dark, x - 3.8 + i * 1.13, 2.55, z, { cast: false }); }
+  for (let i = 0; i < 6; i++) for (const s of [-1, 1]) box(-3.85 + i * 0.9, 1.55, s * 1.205, 0.04, 0.9, 0.03, TM.dark);
   place(new THREE.CylinderGeometry(0.14, 0.14, 2.3, 10).rotateX(Math.PI / 2), TM.canvas, x - 3.98, 2.45, z);
   place(boxGeo(0.02, 0.95, 2.2, 1), V_TRUCK_DARK(), x - 3.99, 1.95, z, { cast: false });
   // jerry cans on the side, tail lights
@@ -1192,7 +1200,7 @@ function desk(x, z, dir, screen = 0, y = 0) { // you sit on the local +z side, f
   fbox(x, y, z, dir, 0, 0.72, 0, 1.5, 0.04, 0.72, I.laminate); fbox(x, y, z, dir, -0.72, 0, 0, 0.04, 0.72, 0.68, I.cab); fbox(x, y, z, dir, 0.5, 0.12, 0, 0.42, 0.6, 0.62, I.cab);
   for (const yy of [0.3, 0.5, 0.66]) fbox(x, y, z, dir, 0.5, yy, 0.32, 0.2, 0.02, 0.02, I.dark);
   fbox(x, y, z, dir, -0.15, 0.76, -0.2, 0.22, 0.02, 0.16, I.dark); fbox(x, y, z, dir, -0.15, 0.78, -0.22, 0.04, 0.12, 0.03, I.dark); fbox(x, y, z, dir, -0.15, 0.88, -0.2, 0.62, 0.38, 0.035, I.dark);
-  fplane(x, y, z, dir, -0.15, 1.07, -0.18, 0.57, 0.33, I.screens[screen % I.screens.length]);
+  fplane(x, y, z, dir, -0.15, 1.07, -0.172, 0.57, 0.33, I.screens[screen % I.screens.length]);
   fbox(x, y, z, dir, -0.15, 0.76, 0.12, 0.42, 0.018, 0.14, I.dark); fbox(x, y, z, dir, 0.2, 0.76, 0.14, 0.06, 0.025, 0.1, I.dark);
   fbox(x, y, z, dir, 0.5, 0.76, -0.1, 0.24, 0.05, 0.32, I.white); fbox(x, y, z, dir, -0.58, 0.76, 0.05, 0.09, 0.11, 0.09, I.jerry);
   fcol(x, y, z, dir, 0, 0, 1.5, 0.72, 0.78);
@@ -1223,7 +1231,7 @@ function rack(x, z, dir, len, levels = 3, depth = 0.9, stock = 'card', y = 0) {
 function wrappedPallet(x, z, h = 1.2, y = 0) { const I = intMats(); addBox(x, y, z, 1.2, 0.14, 1.0, M.wood, { collide: false, s: 1 }); for (let k = 0; k < 2; k++) for (const dx of [-0.29, 0.29]) addBox(x + dx, y + 0.14 + k * h / 2, z, 0.56, h / 2 - 0.02, 0.92, I.card, { collide: false, s: 0.6 }); addBox(x, y + 0.13, z, 1.18, h + 0.03, 0.98, I.wrap, { collide: false, cast: false }); addCollider(x - 0.6, y, z - 0.5, x + 0.6, y + h + 0.16, z + 0.5); }
 function forklift(x, z, dir) { // forks point along local +z
   const I = intMats(), w = cyl(0.26, 0.2, 16);
-  fbox(x, 0, z, dir, 0, 0.3, -0.25, 1.1, 0.7, 1.7, I.yellow); fbox(x, 0, z, dir, 0, 0.3, -1.2, 1.1, 0.95, 0.4, I.dark); fbox(x, 0, z, dir, 0, 1.0, -0.5, 0.5, 0.1, 0.5, I.dark); fbox(x, 0, z, dir, 0, 1.1, -0.78, 0.5, 0.5, 0.08, I.dark);
+  fbox(x, 0, z, dir, 0, 0.3, -0.25, 1.1, 0.7, 1.7, I.yellow); fbox(x, 0, z, dir, 0, 0.27, -1.2, 1.16, 0.98, 0.4, I.dark); fbox(x, 0, z, dir, 0, 1.0, -0.5, 0.5, 0.1, 0.5, I.dark); fbox(x, 0, z, dir, 0, 1.1, -0.78, 0.5, 0.5, 0.08, I.dark);
   for (const sx of [-0.5, 0.5]) { fbox(x, 0, z, dir, sx, 1.0, -1.0, 0.06, 1.1, 0.06, I.dark); fbox(x, 0, z, dir, sx, 1.0, 0.25, 0.06, 1.1, 0.06, I.dark); fbox(x, 0, z, dir, sx * 0.7, 0.15, 0.72, 0.1, 2.5, 0.12, I.dark); fbox(x, 0, z, dir, sx * 0.5, 0.12, 1.3, 0.12, 0.05, 1.1, M.steelLight); fbox(x, 0, z, dir, sx * 0.5, 0.12, 0.8, 0.12, 0.6, 0.05, M.steelLight); }
   fbox(x, 0, z, dir, 0, 2.1, -0.38, 1.12, 0.06, 1.36, I.dark); fbox(x, 0, z, dir, 0, 1.5, 0.72, 0.9, 0.08, 0.1, I.dark); fbox(x, 0, z, dir, 0, 0.75, 0.2, 0.05, 0.5, 0.05, I.dark); fbox(x, 0, z, dir, 0, 1.23, 0.14, 0.3, 0.04, 0.3, I.dark);
   const c = [1, 0, -1, 0][dir], sn = [0, 1, 0, -1][dir];
@@ -1372,7 +1380,7 @@ function updateTracers(dt) {
 }
 // bullet holes
 const HOLES = 150;
-const holeMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.13, 0.13), new THREE.MeshStandardMaterial({ map: T.hole, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, roughness: 1 }), HOLES);
+const holeMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.13, 0.13), new THREE.MeshStandardMaterial({ map: T.hole, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, roughness: 1 }), HOLES);
 { const z = new THREE.Matrix4().makeScale(0, 0, 0); for (let i = 0; i < HOLES; i++) holeMesh.setMatrixAt(i, z); }
 holeMesh.frustumCulled = false; scene.add(holeMesh);
 let holeIdx = 0; const _hm = new THREE.Object3D();
@@ -2041,7 +2049,8 @@ function updateCamera(dt, t) {
   P.fovKick *= Math.exp(-dt * 13);
   const fovT = lerp(lerp(settings.fov, settings.fov + 7, Math.max(P.sprint, P.slide ? 1 : 0)), w.scope && P.zoom2 ? w.fov2 : w.fov, P.ads) + P.fovKick * (1 - P.ads * 0.55);
   // near plane: pushed out while scoped (nothing is close then) so far-off walls, shutters and decals get the depth precision and stop flickering
-  const scoped = w.scope && P.ads > 0.82, nearT = scoped ? 0.7 : 0.1;
+  // Unscoped it also moves out (0.1 -> 0.25) whenever nothing solid is within a metre of the eye, which makes the depth buffer 2.5x finer for the far town.
+  const scoped = w.scope && P.ads > 0.82, nearT = scoped ? 0.7 : eyeClear() ? 0.25 : 0.1;
   if (Math.abs(camera.fov - fovT) > 0.01 || camera.near !== nearT) { camera.fov = fovT; camera.near = nearT; camera.updateProjectionMatrix(); }
   if (scoped) shadowView = scopeView();
 
@@ -2709,7 +2718,7 @@ function searchlight(from, dt) { // a beam from the hunter that sweeps across th
       new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.96, 0.82), blending: THREE.AdditiveBlending, transparent: true, opacity: 0.075, depthWrite: false, side: THREE.DoubleSide, fog: false }));
     const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 4, 64, 64, 64);
     gr.addColorStop(0, 'rgba(255,250,225,1)'); gr.addColorStop(0.7, 'rgba(255,245,210,.75)'); gr.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-    SL.pool = new THREE.Mesh(new THREE.CircleGeometry(3.9, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, transparent: true, opacity: 0.5, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4 }));
+    SL.pool = new THREE.Mesh(new THREE.CircleGeometry(3.9, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, transparent: true, opacity: 0.5, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
     SL.cone.frustumCulled = SL.pool.frustumCulled = false; SL.cone.renderOrder = SL.pool.renderOrder = 5; scene.add(SL.cone, SL.pool);
   }
   SL.live = 0.25; SL.at.lerp(P.pos, Math.min(1, dt * 1.7));
@@ -3155,7 +3164,7 @@ function flatDecal(parent, draw, w, h, x, y, z, rx, ry, rz = 0) {
   g.save(); g.translate(c.width / 2, c.height / 2); g.globalAlpha = 0.9; draw(g, c.width); g.restore();
   g.globalCompositeOperation = 'source-atop'; for (let i = 0; i < 400; i++) { g.fillStyle = `rgba(${sr() < .5 ? '0,0,0' : '255,255,255'},${SR(.03, .1)})`; g.fillRect(sr() * c.width, sr() * c.height, SR(2, 10), SR(1, 4)); } g.globalCompositeOperation = 'source-over';
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, depthWrite: false }));
   m.position.set(x, y, z); m.rotation.set(rx, ry, rz); parent.add(m); return m;
 }
 
@@ -3477,7 +3486,7 @@ function makeCorvette() { // ~84 m missile corvette
   block(g, NAVY.grey, 0, F, -L * 0.2, 9.5, 5.2, 12, 1.0);
   am(g, new THREE.BoxGeometry(B * 0.92, 0.08, L * 0.18), NAVY.deck, 0, F + 0.14, -L * 0.38);
   { const c = document.createElement('canvas'); c.width = c.height = 256; const q = c.getContext('2d'); q.strokeStyle = '#e8e4c8'; q.lineWidth = 6; q.beginPath(); q.arc(128, 128, 100, 0, 7); q.stroke(); q.font = '700 120px Arial'; q.fillStyle = '#e8e4c8'; q.textAlign = 'center'; q.textBaseline = 'middle'; q.fillText('H', 128, 132); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-    const pad = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshStandardMaterial({ map: t, transparent: true, polygonOffset: true, polygonOffsetFactor: -2, roughness: 0.8 })); pad.rotation.x = -Math.PI / 2; pad.position.set(0, F + 0.2, -L * 0.38); g.add(pad); }
+    const pad = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshStandardMaterial({ map: t, transparent: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, roughness: 0.8 })); pad.rotation.x = -Math.PI / 2; pad.position.set(0, F + 0.2, -L * 0.38); g.add(pad); }
   am(g, new THREE.CylinderGeometry(1.0, 1.1, 1.8, 18), NAVY.grey, 0, F + 6.1, -L * 0.25); am(g, new THREE.SphereGeometry(0.95, 16, 10, 0, 6.3, 0, 1.6), NAVY.white, 0, F + 7.0, -L * 0.25);
   for (const s of [-1, 1]) { am(g, new THREE.BoxGeometry(0.05, 0.05, L * 0.66), NAVY.dark, s * B * 0.47, F + 1.1, -L * 0.05); for (let z = -L * 0.38; z < L * 0.28; z += 2.2) am(g, new THREE.BoxGeometry(0.04, 1.1, 0.04), NAVY.dark, s * B * 0.47, F + 0.55, z); }
   for (const s of [-1, 1]) am(g, loft([{ z: -3, w: 2, ht: 0.4, hb: 0.35, y: 0, n: 2.5 }, { z: 2.6, w: 2, ht: 0.45, hb: 0.35, n: 2.5 }, { z: 3.4, w: 0, ht: 0.2, hb: 0.1 }], 20, 16), NAVY.orange, s * 5.3, F + 4.5, -L * 0.1);
@@ -3497,7 +3506,7 @@ const WAKE_TEX = ctex(512, (g, S) => {
   }
 });
 WAKE_TEX.wrapS = WAKE_TEX.wrapT = THREE.ClampToEdgeWrapping;
-const wakeMat = new THREE.MeshBasicMaterial({ map: WAKE_TEX, transparent: true, depthWrite: false, opacity: 0.85, color: new THREE.Color(1.1, 1.15, 1.15), polygonOffset: true, polygonOffsetFactor: -6 });
+const wakeMat = new THREE.MeshBasicMaterial({ map: WAKE_TEX, transparent: true, depthWrite: false, opacity: 0.85, color: new THREE.Color(1.1, 1.15, 1.15), polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 });
 // Built models are pooled and reused so a spawn never builds geometry or compiles shaders mid-game.
 const MAKERS = { heli: () => makeHeli(), jet: () => makeJet(), fac: () => makeFAC(), corvette: () => makeCorvette(), utility: () => makeUtilityHeli() };
 const POOL = { heli: [], jet: [], fac: [], corvette: [], utility: [] };
@@ -4115,7 +4124,7 @@ function lightTower(x, z, h = 22) {
   const D = dockMats();
   place(new THREE.CylinderGeometry(0.22, 0.4, h, 10), D.craneWhite, x, h / 2, z); addCollider(x - 0.4, 0, z - 0.4, x + 0.4, h, z + 0.4);
   addBox(x, h, z, 2.4, 0.12, 0.8, M.steel, { collide: false });
-  for (let i = 0; i < 4; i++) { place(boxGeo(0.5, 0.35, 0.2, 1), M.steel, x - 0.9 + i * 0.6, h + 0.32, z - 0.3, { rx: 0.5 }); place(boxGeo(0.42, 0.26, 0.04, 1), M.lamp, x - 0.9 + i * 0.6, h + 0.27, z - 0.42, { rx: 0.5, cast: false }); }
+  for (let i = 0; i < 4; i++) { place(boxGeo(0.5, 0.35, 0.2, 1), M.steel, x - 0.9 + i * 0.6, h + 0.32, z - 0.3, { rx: 0.5 }); place(boxGeo(0.42, 0.26, 0.04, 1), M.lamp, x - 0.9 + i * 0.6, h + 0.281, z - 0.441, { rx: 0.5, cast: false }); }
 }
 
 function dockYard() {
@@ -4124,7 +4133,7 @@ function dockYard() {
   addBox(56.6, -0.03, 6.7, 28, 0.03, 63.8, D.quay, { collide: false, s: 5, receive: true });
   addBox(54, -0.7, -44.6, 16, 0.7, 38.8, D.quay, { collide: false, s: 5 });
   addBox(54, -4.5, -44.6, 16.1, 3.8, 38.9, D.quayDark, { collide: false, s: 4, cast: false });
-  addBox(56.3, -4.5, -24.7, 28.6, 4.5, 1.0, D.quayDark, { collide: false, s: 4, cast: false });
+  addBox(56.3, -4.5, -24.7, 28.6, 4.47, 1.0, D.quayDark, { collide: false, s: 4, cast: false }); // stops under the yard slab
   for (const r of LAND) addCollider(r.x0, -9, r.z0, r.x1, 0, r.z1, true);
   // lane markings on the pier and in the yard
   const line = (x, z, w, d, mat = M.stripe) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), mat); m.position.set(x, 0.012, z); m.receiveShadow = true; scene.add(m); };
@@ -4132,7 +4141,7 @@ function dockYard() {
   line(54, -44.6, 0.14, 38); for (let z = -60; z < -27; z += 6.5) line(55.5, z, 2.6, 0.1);
   for (let z = -18; z < 34; z += 4) line(56.5, z, 0.14, 2);
   // ---- kerbs, bollards, fenders, ladders
-  hazardCurb(42.6, -25.05, 46, -25.05, [44]); hazardCurb(62, -25.05, 70.6, -25.05, [66]);
+  hazardCurb(42.6, -25.05, 46, -25.05, [44]); hazardCurb(62, -25.05, 70, -25.05, [66]);
   hazardCurb(46.15, -64, 46.15, -25.2, [-37, -55]); hazardCurb(61.85, -64, 61.85, -25.2, [-35, -53]); hazardCurb(46, -63.85, 62, -63.85, [54]);
   for (const z of [-29, -41, -47, -61]) { bollard(46.7, z); bollard(61.3, z); }
   bollard(50, -63.2); bollard(58, -63.2); bollard(68.5, -24.5);
@@ -4177,7 +4186,7 @@ function dockYard() {
   noCastScope = true;
   for (const [x, z, r, h] of [[84, -12, 6, 9], [84, 4, 6, 9], [98, -6, 7.5, 11], [97, 14, 5, 8]]) { place(new THREE.CylinderGeometry(r, r, h, 32), D.tank, x, h / 2, z); place(new THREE.CylinderGeometry(r * 1.01, r * 1.01, 0.3, 32), D.rust, x, h, z); for (let a = 0; a < 6; a++) place(boxGeo(0.06, h, 0.06, 1), M.steel, x + Math.cos(a) * (r + 0.05), h / 2, z + Math.sin(a) * (r + 0.05)); }
   for (const [x, z, w, d, h] of [[90, 30, 22, 14, 9], [115, 8, 18, 30, 12], [86, -30, 14, 10, 7]]) { addBox(x, 0, z, w, h, d, M.wallMetal, { collide: false, s: 4 }); addBox(x, h, z, w + 0.6, 0.4, d + 0.6, M.roof, { collide: false, s: 4 }); }
-  addBox(95, -0.2, 5, 60, 0.2, 90, D.quay, { collide: false, s: 6 });
+  addBox(97.8, -0.2, 5, 54.4, 0.2, 90, D.quay, { collide: false, s: 6 }); addBox(67.8, -0.2, -32.6, 5.6, 0.2, 14.8, D.quay, { collide: false, s: 6 }); addBox(67.8, -0.2, 44.3, 5.6, 0.2, 11.4, D.quay, { collide: false, s: 6 }); // cut around the yard slab
   noCastScope = false;
   // ---- the quay crane and the moving parts are built by buildPort() at boot
 }
@@ -4264,7 +4273,7 @@ function shipMats() {
   });
   const tex = (t, r) => { t.repeat.set(r, r); return t; };
   const decal = (draw, w = 512, h = 512) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); draw(g, w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = maxAniso; return t; };
-  const dm = map => new THREE.MeshStandardMaterial({ map, transparent: true, alphaTest: 0.35, roughness: 0.7, metalness: 0.2, polygonOffset: true, polygonOffsetFactor: -3 });
+  const dm = map => new THREE.MeshStandardMaterial({ map, transparent: true, alphaTest: 0.35, roughness: 0.7, metalness: 0.2, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   const logo = (txt, sub, col = '#f2f2ee') => dm(decal((g, W, H) => {
     g.fillStyle = col; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = `800 ${txt.length > 10 ? 76 : txt.length > 7 ? 92 : 120}px "Arial Narrow", Arial, sans-serif`; g.fillText(txt, W / 2, H * 0.4, W * 0.94);
@@ -4303,7 +4312,7 @@ function shipMats() {
       g.strokeStyle = '#f0f0ea'; g.lineWidth = 6; g.setLineDash([26, 18]); g.beginPath(); g.arc(W / 2, H / 2, W * 0.3, 0, 7); g.stroke(); g.setLineDash([]);
       g.fillStyle = '#f0f0ea'; g.font = '800 250px Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('H', W / 2, H / 2 + 12);
       g.font = '700 30px Arial, sans-serif'; g.fillStyle = '#e8c330'; g.fillText('WINCH ONLY', W / 2, H * 0.83);
-    }), transparent: true, alphaTest: 0.3, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -4 }),
+    }), transparent: true, alphaTest: 0.3, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
     funnel: std({ map: decal((g, W, H) => { // funnel: Aegean blue with the white cross
       g.fillStyle = '#1b56a0'; g.fillRect(0, 0, W, H); g.fillStyle = '#f1f1ec'; for (let k = 0; k < 4; k++) { const cx = (k + 0.5) * W / 4; g.fillRect(cx - 12, H * 0.25, 24, H * 0.42); g.fillRect(cx - 44, H * 0.4, 88, H * 0.12); }
       g.fillStyle = '#f1f1ec'; g.fillRect(0, H * 0.78, W, H * 0.07); g.fillStyle = '#111'; g.fillRect(0, 0, W, H * 0.12);
@@ -4331,7 +4340,7 @@ function makeShip() {
   const uvBox = (w, h, d, k = 0.25) => boxGeo(w, h, d, 1 / k);
   // ---- weather deck (red oxide non-slip), yellow walkway lines, hatch covers with coamings
   am(st, uvBox(B * 0.95, 0.12, L * 0.875), S.deck, 0, F + 0.06, -1.6);
-  for (const s of [-1, 1]) bx(0.1, 0.01, 66, S.yellow, s * 5.35, DECK_Y + 0.006, 1.5);
+  for (const s of [-1, 1]) bx(0.1, 0.03, 66, S.yellow, s * 5.35, DECK_Y + 0.012, 1.5);
   for (const z of SHIP_BAYS) {
     am(st, uvBox(B * 0.86, 0.35, 6.2), S.hatch, 0, F + 0.3, z);
     for (const dz of [-2.05, 0, 2.05]) bx(B * 0.86, 0.03, 0.1, S.dark, 0, HATCH_Y + 0.01, z + dz);
@@ -4396,16 +4405,16 @@ function makeShip() {
   }
   for (let k = 0; k < 4; k++) {
     const y = DECK_Y + k * dh + 1.55;
-    for (let i = 0; i < 6; i++) { const x = -4.6 + i * 1.84; if (k === 0 && (i === 1 || i === 4)) { bx(0.85, 2.0, 0.07, S.red, x, DECK_Y + 1.0, az + Ln / 2 + 0.02); bx(0.3, 0.3, 0.09, S.win, x, DECK_Y + 1.5, az + Ln / 2 + 0.02); continue; } bx(1.05, 0.85, 0.06, i % 3 === 1 && k < 3 ? S.lampOn : S.win, x, y, az + Ln / 2 + 0.01); bx(1.17, 0.06, 0.1, S.grey, x, y - 0.46, az + Ln / 2 + 0.01); }
-    for (const s of [-1, 1]) for (let i = 0; i < 4; i++) bx(0.06, 0.75, 0.95, (i + k) % 4 === 0 ? S.lampOn : S.win, s * (W / 2 + 0.01), y, az - 3 + i * 2.0);
-    for (let i = 0; i < 5; i++) bx(0.95, 0.75, 0.06, S.win, -3.9 + i * 1.95, y, az - Ln / 2 - 0.01);
+    for (let i = 0; i < 6; i++) { const x = -4.6 + i * 1.84; if (k === 0 && (i === 1 || i === 4)) { bx(0.85, 2.0, 0.07, S.red, x, DECK_Y + 1.0, az + Ln / 2 + 0.02); bx(0.3, 0.3, 0.15, S.win, x, DECK_Y + 1.5, az + Ln / 2 + 0.02); continue; } bx(1.05, 0.85, 0.06, i % 3 === 1 && k < 3 ? S.lampOn : S.win, x, y, az + Ln / 2 + 0.03); bx(1.17, 0.06, 0.16, S.grey, x, y - 0.46, az + Ln / 2 + 0.02); }
+    for (const s of [-1, 1]) for (let i = 0; i < 4; i++) bx(0.06, 0.75, 0.95, (i + k) % 4 === 0 ? S.lampOn : S.win, s * (W / 2 + 0.03), y, az - 3 + i * 2.0);
+    for (let i = 0; i < 5; i++) bx(0.95, 0.75, 0.06, S.win, -3.9 + i * 1.95, y, az - Ln / 2 - 0.03);
   }
   // outside stairs zig-zag up the port side, deck to deck
   for (let k = 0; k < 4; k++) { const dir = k % 2 ? -1 : 1; bx(0.75, 0.08, 4.3, S.grey, -(W / 2 + 0.38), DECK_Y + (k + 0.5) * dh, az, dir * Math.atan2(dh, 3.4), 0, 0); for (const h of [0.9]) bx(0.04, 0.04, 4.3, S.rail, -(W / 2 + 0.72), DECK_Y + (k + 0.5) * dh + h, az, dir * Math.atan2(dh, 3.4), 0, 0); }
   // wheelhouse with a wrap-around window band, bridge wings, monkey island
   const by = DECK_Y + 4 * dh;
   am(st, uvBox(9.6, 2.7, 5.2), S.white, 0, by + 1.41, az + 1.6);
-  bx(9.3, 1.05, 0.07, S.win, 0, by + 1.75, az + 4.2, -0.12); for (let i = -4; i <= 4; i++) bx(0.07, 1.1, 0.09, S.white, i * 1.03, by + 1.75, az + 4.21, -0.12);
+  bx(9.3, 1.05, 0.07, S.win, 0, by + 1.75, az + 4.2, -0.12); for (let i = -4; i <= 4; i++) bx(0.07, 1.1, 0.11, S.white, i * 1.03, by + 1.75, az + 4.235, -0.12);
   for (const s of [-1, 1]) { bx(0.07, 1.0, 3.9, S.win, s * 4.81, by + 1.75, az + 2.0); bx(2.6, 1.15, 0.1, S.white, s * 6.1, by + 0.62, az + 4.15); bx(0.1, 1.15, 2.4, S.white, s * 7.38, by + 0.62, az + 3.0); bx(0.5, 1.3, 0.5, S.grey, s * 6.9, by + 0.7, az + 3.3); am(st, new THREE.SphereGeometry(0.2, 8, 6), s < 0 ? AIRM.navR : AIRM.navG, s * 7.45, by + 1.5, az + 3.6); }
   bx(10.2, 0.14, 5.8, S.dark, 0, by + 2.83, az + 1.6);
   for (const h of [0.5, 1.0]) { bx(10, 0.04, 0.04, S.rail, 0, by + 2.9 + h, az + 4.4); for (const s of [-1, 1]) bx(0.04, 0.04, 5.6, S.rail, s * 5, by + 2.9 + h, az + 1.6); }
@@ -4420,7 +4429,7 @@ function makeShip() {
   // free-fall orange lifeboats in davits on both sides, life-raft canisters, a provisions crane
   for (const s of [-1, 1]) {
     const lb = am(st, new THREE.SphereGeometry(1, 18, 12), S.orange, s * 7.75, DECK_Y + 2 * dh + 1.35, az - 0.4); lb.scale.set(1.15, 1.05, 3.3);
-    bx(1.5, 0.7, 3.2, S.orange, s * 7.75, DECK_Y + 2 * dh + 2.2, az - 0.2); bx(1.52, 0.3, 1.2, S.win, s * 7.75, DECK_Y + 2 * dh + 2.3, az + 1.3);
+    bx(1.5, 0.7, 3.2, S.orange, s * 7.75, DECK_Y + 2 * dh + 2.2, az - 0.2); bx(1.58, 0.3, 1.2, S.win, s * 7.75, DECK_Y + 2 * dh + 2.3, az + 1.3);
     for (const dz of [-2.4, 1.8]) { bx(0.22, 3.4, 0.22, S.white, s * 6.95, DECK_Y + 2 * dh + 1.8, az - 0.4 + dz, 0, 0, -s * 0.22); bx(1.7, 0.2, 0.2, S.white, s * 7.6, DECK_Y + 2 * dh + 3.45, az - 0.4 + dz); cy(0.02, 1.1, S.dark, s * 7.75, DECK_Y + 2 * dh + 2.9, az - 0.4 + dz, 0, 0, 0, 5); }
     for (let i = 0; i < 3; i++) cy(0.32, 1.15, S.white, s * (W / 2 + 0.25), DECK_Y + 3 * dh + 0.5, az - 3.2 + i * 0.85, Math.PI / 2, 0, 0, 12);
     cy(0.5, 0.7, S.orange, s * (W / 2 + 0.3), DECK_Y + dh + 0.45, az + 3.6, 0, 0, 0, 14); // lifebuoy locker
@@ -4555,15 +4564,15 @@ function makeCrane() {
   for (const lx of [-6, 6]) { bx(1.0, 1.4, 13, D.crane, lx, 13, 0); bx(0.8, 0.8, 12, D.crane, lx, 7, 0); const L = Math.hypot(13, 12); for (const s of [-1, 1]) bx(0.35, L, 0.35, D.crane, lx, 13 + 6, 0, [Math.atan2(13, 12) * s, 0, 0]); }
   for (const lz of [-6.5, 6.5]) { bx(13, 1.6, 1.2, D.crane, 0, 25.6, lz); bx(13, 1.2, 1.0, D.crane, 0, 13, lz); }
   // boom: two box girders from land side (+x) out over the ship (-x), ties, walkway, apex and stays
-  for (const s of [-1, 1]) { bx(46, 1.7, 0.8, D.craneWhite, -8, 27.4, s * 1.6); bx(46, 0.15, 0.6, M.steel, -8, 26.5, s * 1.0); }
+  for (const s of [-1, 1]) { bx(46, 1.7, 0.8, D.craneWhite, -8, 27.4, s * 1.6); bx(45.9, 0.15, 0.6, M.steel, -8, 26.5, s * 1.0); }
   for (let x = -30; x <= 14; x += 4) bx(0.4, 0.4, 3.6, D.craneWhite, x, 28.2, 0);
   for (const s of [-1, 1]) { bx(0.9, 13, 0.9, D.crane, 0, 34.5, s * 1.6, [0, 0, 0]); }
   bx(1.2, 1.2, 4.2, D.crane, 0, 41, 0);
   const stay = (x0, y0, x1, y1) => { const L = Math.hypot(x1 - x0, y1 - y0); for (const s of [-1, 1]) { const m = am(g, new THREE.CylinderGeometry(0.09, 0.09, L, 6), M.steel, (x0 + x1) / 2, (y0 + y1) / 2, s * 1.6); m.rotation.z = Math.atan2(x0 - x1, y1 - y0); } };
   stay(0, 41, -30, 28.2); stay(0, 41, -18, 28.2); stay(0, 41, 14, 28.2);
-  for (const [x, c] of [[-30.6, D.yellow], [-29.6, D.black]]) bx(1.0, 1.75, 4.0, c, x, 27.4, 0);
+  for (const [x, c] of [[-30.6, D.yellow], [-29.6, D.black]]) bx(1.0, 1.9, 4.16, c, x, 27.4, 0); // end caps stand proud of the girders on every side (shared faces flicker)
   // machinery house on the back of the boom, with Greek flag-blue stripe
-  bx(6, 3.2, 4.8, D.craneWhite, 10, 29.9, 0); bx(6.1, 0.5, 4.85, BLUE_MAT(), 10, 30.9, 0);
+  bx(6, 3.2, 4.8, D.craneWhite, 10, 29.9, 0); bx(6.16, 0.5, 4.92, BLUE_MAT(), 10, 30.9, 0);
   // trolley + cab, hoist ropes, spreader (moving parts)
   const trolley = new THREE.Group(); g.add(trolley);
   am(trolley, new THREE.BoxGeometry(3.2, 1.2, 3.6), D.crane, 0, 26.0, 0);
@@ -5042,4 +5051,5 @@ function showWebLobby() {
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
 }
 requestAnimationFrame(frame);
+for (const k in M) if (M[k] && M[k].isMaterial && !M[k].name) M[k].name = k; if (VILM) for (const k in VILM) if (!VILM[k].name) VILM[k].name = 'V.' + k;
 window.__tb = { rayWorld, makeOperator, poseOperator, provoke, shotAtVehicles, missiles, shells, port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, exHeli, aboard, grabRope, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet, sun, scopeView, fitShadows, IR, toggleIR, throwNade, nades, giveLauncher, startDrop, get drop() { return drop; }, DAY, settings, prog, threat, get deployed() { return deployed; }, get inLobby() { return inLobby; }, chatSend, tryVault, trySlide, surfaceAt, ROPE_HELIS };
