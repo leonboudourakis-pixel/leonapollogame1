@@ -15,9 +15,16 @@ const MAX_HP = 200; // players and bots; damage depends on where you are hit (se
 const TEAM_NAMES = ['Poseidon', 'Ares'];
 const MAX_BOTS = 6;
 const ROPE_LIFE = 80000; // ms a rope helicopter visit lasts, from first sight to gone
+const DROP_LIFE = 150000; // ms a supply crate stays before it is withdrawn
+const COLORS = 8;         // armband colours a player can pick (see PALETTE in game.js)
+const CAMOS = ['std', 'lizard', 'woodland', 'arid', 'black', 'aegean'];
+const RESPAWN_MS = 3600;  // long enough for the kill cam
+const newStats = () => ({ shots: 0, hits: 0, heads: 0, dmg: 0, long: 0, snipe: 0 });
 
 const rand = (a, b) => a + (b - a) * Math.random();
 const clean = s => String(s || 'Operator').replace(/[<>&"]/g, '').trim().slice(0, 16) || 'Operator';
+const cleanChat = s => String(s == null ? '' : s).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+const dist3 = (a, b) => a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : 0;
 
 class Match {
   constructor(o = {}) {
@@ -27,6 +34,7 @@ class Match {
     this.cfg = { mode: 'ffa', bots: 0, skill: 1 };
     this.players = new Map(); this.nextId = 1; this.over = false; this.teamKills = [0, 0];
     this.owner = 0; this.rope = null; this.ropeN = 0; this.nextRope = Date.now() + rand(45, 70) * 1000;
+    this.drop = null; this.dropN = 0; this.nextDrop = Date.now() + rand(60, 95) * 1000;
     this.names = BOT_NAMES.slice().sort(() => Math.random() - 0.5);
     this.gen = 0;
     this.iv = setInterval(() => this.tick(), 200);
@@ -35,7 +43,7 @@ class Match {
   humans() { return [...this.players.values()].filter(p => !p.bot); }
   bots() { return [...this.players.values()].filter(p => p.bot); }
   broadcast(m, except) { for (const p of this.players.values()) if (p !== except && p.send) p.send(m); }
-  summary(p) { return { id: p.id, name: p.name, slot: p.slot, kills: p.kills, deaths: p.deaths, hp: Math.round(p.hp), alive: p.alive, bot: !!p.bot, team: p.team, look: p.look }; }
+  summary(p) { const s = p.st; return { id: p.id, name: p.name, slot: p.slot, kills: p.kills, deaths: p.deaths, hp: Math.round(p.hp), alive: p.alive, bot: !!p.bot, team: p.team, look: p.look, color: p.color, camo: p.camo, ready: p.bot || !!p.ready, host: !!p.host, sh: s.shots, hi: s.hits, hs: s.heads, lg: Math.round(s.snipe) }; }
   roster() { return [...this.players.values()].map(p => this.summary(p)); }
   scoresMsg() { return { scores: this.roster(), teams: this.teamKills.slice() }; }
   setCfg(c) {
@@ -57,7 +65,7 @@ class Match {
     const usedLooks = new Set(bots.map(b => b.look));
     while (bots.length < want) {
       let k = 0; while (usedLooks.has(10 + k)) k++; usedLooks.add(10 + k);
-      const b = { id: this.nextId++, send: null, name: this.names[k % this.names.length], slot: -1, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: true, team: -1, look: 10 + k };
+      const b = { id: this.nextId++, send: null, name: this.names[k % this.names.length], slot: -1, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: true, team: -1, look: 10 + k, color: -1, camo: 'std', ready: true, st: newStats() };
       this.players.set(b.id, b); bots.push(b); fresh.push(b);
     }
     if (this.cfg.mode === 'team') {
@@ -75,15 +83,23 @@ class Match {
   pushRoster() { this.broadcast({ t: 'roster', players: this.roster(), cfg: this.cfg, target: this.target, owner: this.owner, teams: this.teamKills.slice() }); }
   respawnSoon(p) { p.alive = false; this.broadcast({ t: 'gone', id: p.id }); setTimeout(() => this.spawn(p), 1200); }
 
-  join(name, send, isHost, cfg) {
+  profile(p, o) { // callsign, armband colour and uniform a player picked in the lobby
+    if (!o) return;
+    if (o.name != null) p.name = clean(o.name);
+    if (Number.isInteger(o.color) && o.color >= 0 && o.color < COLORS) p.color = o.color;
+    if (CAMOS.includes(o.camo)) p.camo = o.camo;
+  }
+  // prof: the hello message. prof.lobby = wait in the lobby (chat, pick a colour) and spawn on 'ready'.
+  join(name, send, isHost, cfg, prof) {
     if (this.humans().length >= this.maxHumans) return null;
     const used = new Set(this.humans().map(p => p.slot)); let slot = 0; while (used.has(slot)) slot++;
-    const p = { id: this.nextId++, send, name: clean(name), slot, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: false, team: -1, look: slot, host: !!isHost };
+    const p = { id: this.nextId++, send, name: clean(name), slot, kills: 0, deaths: 0, hp: MAX_HP, alive: false, pos: null, lastHurt: 0, bot: false, team: -1, look: slot, host: !!isHost, color: slot % COLORS, camo: 'std', ready: !(prof && prof.lobby), st: newStats(), chatT: [] };
+    this.profile(p, prof);
     if (this.humans().length === 0) { this.over = false; this.teamKills = [0, 0]; }
     if (isHost && cfg) this.setCfg(cfg);
     this.players.set(p.id, p);
     const fresh = this.sync();
-    send({ t: 'welcome', you: p.id, host: p.host, target: this.target, cfg: this.cfg, owner: this.owner, players: this.roster(), over: this.over, teams: this.teamKills.slice(), rope: this.rope ? { ...this.rope, age: Date.now() - this.rope.t0 } : null });
+    send({ t: 'welcome', you: p.id, host: p.host, target: this.target, cfg: this.cfg, owner: this.owner, players: this.roster(), over: this.over, teams: this.teamKills.slice(), rope: this.rope ? { ...this.rope, age: Date.now() - this.rope.t0 } : null, drop: this.drop && !this.drop.taken ? { ...this.drop, age: Date.now() - this.drop.t0 } : null });
     this.broadcast({ t: 'roster', players: this.roster(), cfg: this.cfg, target: this.target, owner: this.owner, teams: this.teamKills.slice(), joined: p.id }, p);
     this.log(`  + ${p.name} joined (${this.humans().length}/${this.maxHumans})`);
     this.spawn(p);
@@ -98,7 +114,7 @@ class Match {
     const fresh = this.sync();
     this.pushRoster();
     for (const b of fresh) this.spawn(b);
-    if (!this.humans().length) { this.over = false; this.rope = null; }
+    if (!this.humans().length) { this.over = false; this.rope = null; this.drop = null; }
   }
   applyCfg(c) {
     this.setCfg(c);
@@ -126,7 +142,7 @@ class Match {
     return best;
   }
   spawn(p) {
-    if (!this.players.has(p.id) || p.alive) return;
+    if (!this.players.has(p.id) || p.alive || (!p.bot && !p.ready)) return;
     const s = this.pickSpawn(p);
     p.hp = MAX_HP; p.alive = true; p.pos = [SPAWNS[s][0], 0, SPAWNS[s][1]]; p.lastHurt = 0;
     this.broadcast({ t: 'spawn', id: p.id, s });
@@ -134,24 +150,38 @@ class Match {
   enemies(a, b) { return a !== b && (this.cfg.mode !== 'team' || a.team !== b.team); }
   damage(t, dmg, from, head, w, cause) {
     if (!t || !t.alive || this.over) return;
-    t.hp -= dmg; t.lastHurt = Date.now();
+    t.hp -= dmg; t.lastHurt = Date.now(); if (from && from !== t) from.st.dmg += Math.min(dmg, Math.max(0, t.hp + dmg));
     this.broadcast({ t: 'hp', id: t.id, hp: Math.max(0, Math.round(t.hp)), from: from ? from.id : 0, dmg });
     if (t.hp > 0) return;
     t.alive = false; t.deaths++;
     const credit = from && from !== t;
-    if (credit) { from.kills++; if (from.team === 0 || from.team === 1) this.teamKills[from.team]++; }
-    this.broadcast({ t: 'kill', killer: credit ? from.id : 0, victim: t.id, head: !!head, w, ...(cause ? { cause } : {}), ...this.scoresMsg() });
+    let d = 0;
+    if (credit) {
+      from.kills++; if (from.team === 0 || from.team === 1) this.teamKills[from.team]++;
+      d = Math.round(dist3(from.pos, t.pos)); if (head) from.st.heads++;
+      if (d > from.st.long) from.st.long = d; if (w === 1 && d > from.st.snipe) from.st.snipe = d;
+    }
+    this.broadcast({ t: 'kill', killer: credit ? from.id : 0, victim: t.id, head: !!head, w, d, ...(cause ? { cause } : {}), ...this.scoresMsg() });
     const won = credit && (this.cfg.mode === 'team' ? this.teamKills[from.team] >= this.target : from.kills >= this.target);
     if (won) {
       this.over = true; const g = this.gen;
-      this.broadcast({ t: 'end', winner: from.id, team: this.cfg.mode === 'team' ? from.team : -1, ...this.scoresMsg() });
+      this.broadcast({ t: 'end', winner: from.id, team: this.cfg.mode === 'team' ? from.team : -1, awards: this.awards(), ...this.scoresMsg() });
       this.log(this.cfg.mode === 'team' ? `  ★ Team ${TEAM_NAMES[from.team]} wins the match` : `  ★ ${from.name} wins the match`);
       setTimeout(() => { if (g === this.gen) this.restart(); }, 10000);
-    } else { const g = this.gen; setTimeout(() => { if (g === this.gen) this.spawn(t); }, 3000); }
+    } else { const g = this.gen; setTimeout(() => { if (g === this.gen) this.spawn(t); }, RESPAWN_MS); }
+  }
+  awards() { // end-of-match honours
+    const ps = [...this.players.values()]; if (!ps.length) return {};
+    const best = (f, min = 0) => { let b = null, bv = min; for (const p of ps) { const v = f(p); if (v > bv) { bv = v; b = p; } } return b ? { id: b.id, v: Math.round(bv) } : null; };
+    return {
+      mvp: best(p => p.kills * 100 - p.deaths * 25 + p.st.dmg / 10 + 0.001, -1e9),
+      acc: best(p => p.st.shots >= 8 ? Math.min(100, p.st.hits / p.st.shots * 100) : 0),
+      snipe: best(p => p.st.snipe), heads: best(p => p.st.heads), long: best(p => p.st.long)
+    };
   }
   restart(withRoster) {
     this.gen++; this.over = false; this.teamKills = [0, 0];
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; }
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; p.st = newStats(); }
     if (withRoster) this.pushRoster();
     this.broadcast({ t: 'start', target: this.target, cfg: this.cfg, ...this.scoresMsg() });
     for (const p of this.players.values()) this.spawn(p);
@@ -170,21 +200,40 @@ class Match {
         this.broadcast(m, p); break;
       case 'shot': {
         const a = m.as ? asBot(m.as) : p; if (!a) return;
-        m.id = a.id; delete m.as; this.broadcast(m, p); break;
+        a.st.shots++; m.id = a.id; delete m.as; this.broadcast(m, p); break;
       }
       case 'hit': {
         const a = m.as ? asBot(m.as) : p, t = this.players.get(m.target);
-        if (!a || !t || !a.alive || !this.enemies(a, t)) return;
+        if (!a || !t || !this.enemies(a, t)) return;
+        if (!a.alive && m.w !== 4 && m.w !== 6) return; // a grenade can still go off after its thrower is down
+        if (t.alive && !this.over) a.st.hits++;
         this.damage(t, Math.max(0, Math.min(260, +m.dmg || 0)), a, m.head, m.w);
         break;
       }
       case 'fall': { // fall damage or drowning, reported by the faller
         const a = m.as ? asBot(m.as) : p;
-        if (a) this.damage(a, Math.max(0, Math.min(200, +m.dmg || 0)), null, false, -1, ['heli', 'jet', 'ship'].includes(m.cause) ? m.cause : undefined);
+        if (a) this.damage(a, Math.max(0, Math.min(200, +m.dmg || 0)), null, false, -1, ['heli', 'jet', 'ship', 'blast'].includes(m.cause) ? m.cause : undefined);
         break;
       }
       case 'cfg': if (p.host) { this.applyCfg(m.cfg); this.log(`  Settings: ${this.cfg.mode === 'team' ? 'teams' : 'free for all'}, ${this.cfg.bots} bots`); } break;
       case 'ping': p.send && p.send({ t: 'pong', ts: m.ts }); break;
+      case 'ready': if (!p.ready) { p.ready = true; this.pushRoster(); this.spawn(p); } break;
+      case 'profile': this.profile(p, m); this.pushRoster(); break;
+      case 'chat': {
+        const text = cleanChat(m.text), now = Date.now(); if (!text) return;
+        p.chatT = (p.chatT || []).filter(t => now - t < 6000); if (p.chatT.length >= 6) return; p.chatT.push(now);
+        this.broadcast({ t: 'chat', id: p.id, name: p.name, text }); break;
+      }
+      case 'nade': // a thrown grenade or a launcher round: everyone else draws the same arc
+        if (!Array.isArray(m.o) || !Array.isArray(m.v)) return;
+        this.broadcast({ t: 'nade', id: p.id, k: String(m.k).slice(0, 1), o: m.o.slice(0, 3), v: m.v.slice(0, 3), f: +m.f || 0, n: m.n | 0 }, p); break;
+      case 'boom':
+        if (!Array.isArray(m.p)) return;
+        this.broadcast({ t: 'boom', id: p.id, k: String(m.k).slice(0, 1), p: m.p.slice(0, 3), n: m.n | 0 }, p); break;
+      case 'evict': this.broadcast({ t: 'evict', id: p.id }, p); break; // the helicopter that lifts a player off the cargo ship, drawn for everyone
+      case 'grab': // first living player to reach the supply crate takes it
+        if (this.drop && this.drop.n === m.n && !this.drop.taken && p.alive) { this.drop.taken = p.id; this.broadcast({ t: 'taken', n: m.n, id: p.id }); }
+        break;
     }
   }
 
@@ -205,8 +254,15 @@ class Match {
       this.broadcast({ t: 'rope', ...this.rope, age: 0 });
       this.nextRope = now + ROPE_LIFE + rand(50, 100) * 1000;
     }
+    if (this.drop && (this.drop.taken || now - this.drop.t0 > DROP_LIFE)) { if (!this.drop.taken) this.broadcast({ t: 'taken', n: this.drop.n, id: 0 }); this.drop = null; }
+    if (!this.drop && now > this.nextDrop && this.humans().some(h => h.ready) && !this.over) {
+      const q = ROPE_POINTS[Math.floor(Math.random() * ROPE_POINTS.length)];
+      this.drop = { n: ++this.dropN, x: q[0] + rand(-2, 2), z: q[1] + rand(-2, 2), from: Math.random() < 0.5 ? -1 : 1, t0: now, taken: 0 };
+      this.broadcast({ t: 'drop', ...this.drop, age: 0 });
+      this.nextDrop = now + rand(150, 215) * 1000;
+    }
   }
   close() { clearInterval(this.iv); }
 }
 
-module.exports = { Match, MAX_HP, SPAWNS, ROPE_POINTS, TEAM_NAMES, MAX_BOTS, ROPE_LIFE };
+module.exports = { Match, MAX_HP, SPAWNS, ROPE_POINTS, TEAM_NAMES, MAX_BOTS, ROPE_LIFE, RESPAWN_MS, CAMOS };

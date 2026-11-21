@@ -83,10 +83,13 @@ function blobs(g, W, H, r, n, col, rmin, rmax, sx = 1, sy = 1) {
 function camoTex(kind, seed) {
   return canvasTex('camo:' + kind + ':' + seed, 256, (g, W, H) => {
     const r = rng(seed * 31 + kind.length);
-    const base = { lizard: '#a89a72', multi: '#9f9170', woodland: '#7a7454', arid: '#bfa982', ranger: '#4d533b', black: '#26282c', aor: '#5d6544', coyote: '#8a7556' }[kind];
+    const base = { lizard: '#a89a72', multi: '#9f9170', woodland: '#7a7454', arid: '#bfa982', ranger: '#4d533b', black: '#26282c', aor: '#5d6544', coyote: '#8a7556', aegean: '#d9e1e8' }[kind];
     g.fillStyle = base; g.fillRect(0, 0, W, H);
     if (kind === 'lizard') { // Greek lizard: short vertical brush strokes
       for (const [col, n] of [['#56653a', 70], ['#6b4e33', 55], ['#3b3a28', 25]]) { g.fillStyle = col; for (let i = 0; i < n; i++) { const x = r() * W, y = r() * H, w = 4 + r() * 7, h = 18 + r() * 40; g.beginPath(); g.ellipse(x, y, w / 2, h / 2, (r() - 0.5) * 0.25, 0, 7); g.fill(); g.beginPath(); g.ellipse(x, y + H - (y > H / 2 ? 2 * H : 0), w / 2, h / 2, 0, 0, 7); g.fill(); } }
+    } else if (kind === 'aegean') { // blue-and-white Greek naval splinter: flag blue, sea blue and deep navy shards on white
+      for (const [col, n] of [['#1f5fa8', 16], ['#5b93cf', 13], ['#12305e', 9]]) { g.fillStyle = col; for (let i = 0; i < n; i++) { const x = r() * W, y = r() * H, a = r() * 6.28, L = 26 + r() * 46, w = 8 + r() * 18; for (const [ox, oy] of [[0, 0], [-W, 0], [W, 0], [0, -H], [0, H]]) { g.beginPath(); g.moveTo(x + ox + Math.cos(a) * L, y + oy + Math.sin(a) * L); g.lineTo(x + ox + Math.cos(a + 2.2) * w, y + oy + Math.sin(a + 2.2) * w); g.lineTo(x + ox - Math.cos(a) * L * 0.5, y + oy - Math.sin(a) * L * 0.5); g.lineTo(x + ox + Math.cos(a - 2.0) * w, y + oy + Math.sin(a - 2.0) * w); g.closePath(); g.fill(); } } }
+      g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = 2; for (let i = 0; i < 12; i++) { const x = r() * W, y = r() * H; g.beginPath(); g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 50, y + (r() - 0.5) * 50); g.stroke(); }
     } else if (kind === 'multi') {
       blobs(g, W, H, r, 10, '#c3b48d', 20, 40, 1.4, 0.8); blobs(g, W, H, r, 14, '#7b7a4d', 14, 30, 1.2, 1); blobs(g, W, H, r, 10, '#6a5236', 10, 22, 1, 1.4);
       g.strokeStyle = '#3b2e20'; g.lineWidth = 2.5; for (let i = 0; i < 18; i++) { let x = r() * W, y = r() * H; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 4; k++) { x += (r() - 0.5) * 22; y += r() * 18; g.lineTo(x, y); } g.stroke(); }
@@ -103,6 +106,7 @@ function camoTex(kind, seed) {
     const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, 'rgba(60,45,30,0)'); gr.addColorStop(1, 'rgba(60,45,30,.18)'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
   });
 }
+export const camoTexture = (kind, seed = 1) => camoTex(kind, seed);
 function corduraTex(col, seed) {
   return canvasTex('cord:' + col, 128, (g, W, H) => {
     const r = rng(seed); g.fillStyle = col; g.fillRect(0, 0, W, H);
@@ -272,8 +276,9 @@ export function ropeMaterial() { return SH.rope || (SH.rope = new THREE.MeshStan
 
 // ---------------------------------------------------------------- the model
 const L1 = 0.29, L2 = 0.29; // upper arm, forearm+hand reach
-export function makeOperator(lookId, bandColor = 0x888888) {
+export function makeOperator(lookId, bandColor = 0x888888, camo) { // camo: a uniform the player picked (overrides the look's own)
   const L = lookFor(lookId), r = rng(L.seed * 101 + 7);
+  if (camo && camo !== 'std') { L.camo = camo; L.pants = camo; if (camo === 'aegean') { L.gear = 2; L.helm = 2; } }
   const shirt = cmat('camo' + L.camo + L.seed, () => new THREE.MeshStandardMaterial({ map: camoTex(L.camo, L.seed), roughness: 0.93, bumpMap: clothBump(), bumpScale: 1.6 }));
   const pants = L.pants === L.camo ? shirt : cmat('camo' + L.pants + L.seed + 'p', () => new THREE.MeshStandardMaterial({ map: camoTex(L.pants, L.seed + 50), roughness: 0.94, bumpMap: clothBump(), bumpScale: 1.6 }));
   const gearCol = GEAR[L.gear % GEAR.length];
@@ -281,7 +286,7 @@ export function makeOperator(lookId, bandColor = 0x888888) {
   const skin = cmat('skin' + L.skin, () => new THREE.MeshStandardMaterial({ color: SKIN[L.skin % SKIN.length], roughness: 0.62, metalness: 0 }));
   const face = cmat('face' + L.seed, () => new THREE.MeshStandardMaterial({ map: faceTex(L), roughness: 0.56, bumpMap: faceTex(L), bumpScale: 0.25 }));
   const hair = cmat('hair' + L.hair, () => new THREE.MeshStandardMaterial({ color: HAIR[L.hair % HAIR.length], roughness: 0.95 }));
-  const helm = cmat('helm' + L.helm + L.head, () => L.head === 'helmetCover' ? new THREE.MeshStandardMaterial({ map: camoTex(L.camo, L.seed + 9), roughness: 0.9 }) : new THREE.MeshStandardMaterial({ color: HELM[L.helm % HELM.length], roughness: 0.55, metalness: 0.05 }));
+  const helm = cmat('helm' + L.helm + L.head + (L.head === 'helmetCover' ? L.camo : ''), () => L.head === 'helmetCover' ? new THREE.MeshStandardMaterial({ map: camoTex(L.camo, L.seed + 9), roughness: 0.9 }) : new THREE.MeshStandardMaterial({ color: HELM[L.helm % HELM.length], roughness: 0.55, metalness: 0.05 }));
   const glove = cmat('glove' + (L.seed % 3), () => new THREE.MeshStandardMaterial({ color: ['#2a2723', '#6e5d45', '#1c1c1c'][L.seed % 3], roughness: 0.85 }));
   const boot = cmat('boot' + (L.seed % 3), () => new THREE.MeshStandardMaterial({ color: ['#6b5940', '#2a2622', '#4d4535'][L.seed % 3], roughness: 0.8 }));
   const band = new THREE.MeshStandardMaterial({ color: bandColor, emissive: bandColor, emissiveIntensity: 0.35, roughness: 0.6 });

@@ -130,6 +130,56 @@ input[type=range]{accent-color:var(--amber);width:200px}
 #board p{margin:14px 0 0;color:var(--dim);font-size:12px}
 #net{position:absolute;left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));top:max(22px,calc(env(safe-area-inset-top,0px) + 12px));font-size:11px;color:var(--dim);letter-spacing:.06em}
 #err{position:fixed;inset:auto 16px 16px;z-index:50;background:#2a0f0c;border:1px solid var(--hostile);padding:12px 14px;font-size:12px}
+/* round 5 HUD */
+#tools{display:grid;gap:5px;margin-top:8px}
+#irbar{width:200px;height:3px;background:var(--faint)}
+#irbar b{display:block;height:100%;background:#7fd4e8;transition:width .1s}
+#irbar.on b{background:#ff9b3d;box-shadow:0 0 8px #ff9b3d}
+#irbar.low b{background:var(--hostile)}
+#nades{font-size:11px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
+#nades b{color:var(--ink);font-weight:500;letter-spacing:.2em}
+#chat{position:absolute;left:max(28px,calc(env(safe-area-inset-left,0px) + 16px));bottom:190px;width:min(430px,60vw);display:grid;gap:6px}
+#chatlog{display:grid;gap:3px;justify-items:start}
+#chatlog div{background:var(--panel);padding:4px 9px;font-size:12px;max-width:100%;overflow-wrap:anywhere;transition:opacity 1.2s}
+#chatlog div.old{opacity:0}
+#chatlog.typing div.old{opacity:.85}
+#chatinput{pointer-events:auto;font-size:13px;padding:8px 10px;width:100%;background:rgba(9,11,15,.82);border-color:var(--amber)}
+.sys{color:var(--dim)}
+#threat{position:absolute;left:50%;top:17%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:8px 16px;background:rgba(40,4,2,.72);border:1px solid var(--hostile);
+  font:700 15px/1 var(--display);letter-spacing:.14em;color:#ffd9d2;text-transform:uppercase;animation:threat .9s infinite}
+#threat.hot{animation-duration:.32s;background:rgba(90,6,2,.82)}
+#threatarrow{width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid var(--hostile)}
+@keyframes threat{0%,100%{opacity:1}50%{opacity:.5}}
+#threatedge{position:absolute;inset:0;box-shadow:inset 0 0 120px 30px rgba(255,30,10,.45);opacity:0;pointer-events:none}
+#white{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#killcam{position:absolute;inset:0;pointer-events:none}
+#killcam:before,#killcam:after{content:'';position:absolute;left:0;right:0;height:11vh;background:#000}
+#killcam:before{top:0}#killcam:after{bottom:0}
+#killcam span{position:absolute;left:50%;bottom:13vh;transform:translateX(-50%);font:700 18px/1 var(--display);letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;text-shadow:0 1px 3px #000}
+#killcam span b{color:var(--amber)}
+#awards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 14px}
+#awards div{border:1px solid var(--faint);padding:8px 10px;display:grid;gap:3px}
+#awards div span{font:500 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+#awards div b{font:800 20px/1 var(--display);text-transform:uppercase}
+#awards div em{font-style:normal;font-size:12px;color:var(--amber)}
+#dropmark{position:absolute;left:0;top:0;font:700 11px/1 var(--mono);letter-spacing:.12em;color:#b7f0a0;text-shadow:0 1px 2px #000;white-space:nowrap;transform:translate(-50%,-100%)}
+#dropmark:after{content:'';display:block;width:0;height:0;margin:3px auto 0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid #b7f0a0}
+/* lobby and loadout */
+#lobby{gap:10px}
+#lobbylist{display:grid;gap:4px;font-size:13px}
+#lobbylist div{display:flex;align-items:center;gap:8px}
+#lobbylist i{width:10px;height:10px;border-radius:2px;display:inline-block}
+#lobbylist em{font-style:normal;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--amber)}
+#lobbylist span{margin-left:auto;font-size:11px;color:var(--dim)}
+#lobbylist .open{color:var(--dim);font-size:11px}
+#lobbylog{height:112px;overflow:auto;border:1px solid var(--faint);padding:6px 8px;font-size:12px;display:grid;gap:3px;align-content:start;overflow-wrap:anywhere}
+#lobby input[type=text]{font-size:14px;padding:9px 10px;width:min(330px,100%);text-transform:none}
+.swatches{display:flex;gap:6px}
+.swatches button{width:26px;height:26px;border-radius:2px;border:2px solid transparent;padding:0}
+.swatches button[aria-pressed=true]{border-color:var(--ink);box-shadow:0 0 0 1px #000 inset}
+#loadout{border:1px solid var(--faint);padding:14px 16px;max-width:520px;gap:12px}
+#loadout .seg{flex-wrap:wrap}
+#loadout .seg button{padding:7px 10px;font-size:11px}
 @media (max-width:640px){ .overlay{background:rgba(7,9,12,.9)} #hpnum,#ammo{font-size:40px} }
 @media (prefers-reduced-motion:reduce){ #feed div,#dmg i{animation-duration:.01s} }
 </style>
@@ -150,14 +200,21 @@ input[type=range]{accent-color:var(--amber);width:200px}
     </g><circle r=".55" fill="#ff3b2f"/></svg><div class="info"><span id="scopeZoom">12×</span> · <span id="scopeBreath">HOLD SHIFT TO STEADY · SCROLL TO ZOOM</span></div></div>
   <div id="dmg"></div>
   <div id="hitflash"></div>
+  <div id="threatedge"></div>
+  <div id="threat" hidden><i id="threatarrow"></i><span id="threattext"></span></div>
+  <div id="dropmark" hidden>SUPPLY DROP</div>
+  <div id="chat"><div id="chatlog"></div><input type="text" id="chatinput" maxlength="140" autocomplete="off" spellcheck="false" placeholder="Message everyone · Enter sends · Esc cancels" hidden></div>
+  <div id="killcam" hidden><span id="killcamtext"></span></div>
   <div id="net"></div>
   <div id="score"></div>
   <div id="feed"></div>
   <div id="banner" hidden><b id="bannerT"></b><span id="bannerS"></span></div>
   <div id="prompt" hidden></div>
-  <div class="corner" id="vitals"><span class="label">Health</span><div id="hpnum">200</div><div id="hpbar"><b style="width:100%"></b></div></div>
+  <div class="corner" id="vitals"><span class="label">Health</span><div id="hpnum">200</div><div id="hpbar"><b style="width:100%"></b></div>
+    <div id="tools"><span class="label" id="irlabel">F · Infrared</span><div id="irbar"><b style="width:100%"></b></div><div id="nades"></div></div></div>
   <div class="corner" id="arms"><div id="slots"></div><div id="ammo">30<small> / 120</small></div><div id="wname">Carbine</div></div>
   <div id="board" hidden></div>
+  <div id="white"></div>
 </div>
 
 <div class="overlay" id="menu">
@@ -172,6 +229,19 @@ input[type=range]{accent-color:var(--amber);width:200px}
     <div class="row">
       <div class="field"><label class="label" for="sens">Mouse sensitivity</label><input type="range" id="sens" min="0.3" max="2.5" step="0.05" value="1"></div>
       <div class="field"><span class="label">Graphics</span><div class="seg" id="quality"><button type="button" data-q="auto" title="Adjusts resolution to stay smooth">Auto</button><button type="button" data-q="ultra">Ultra</button><button type="button" data-q="high">High</button><button type="button" data-q="fast">Fast</button></div></div>
+    </div>
+    <div class="row">
+      <div class="field"><label class="label" for="fov">Field of view · <span id="fovv">75</span>°</label><input type="range" id="fov" min="60" max="100" step="1" value="75"></div>
+      <div class="field"><label class="label" for="vol">Volume</label><input type="range" id="vol" min="0" max="1" step="0.05" value="0.9"></div>
+    </div>
+    <div class="field" id="loadout">
+      <span class="label">Loadout · <span id="prog"></span></span>
+      <div class="row">
+        <div class="field"><span class="label">Spawn holding</span><div class="seg" id="lprimary"></div></div>
+        <div class="field"><span class="label">Armband colour</span><div class="swatches" id="lcolor"></div></div>
+      </div>
+      <div class="field"><span class="label">Uniform</span><div class="seg" id="lcamo"></div></div>
+      <div class="field"><span class="label">Weapon finish</span><div class="seg" id="lskin"></div></div>
     </div>
     <div class="row" id="matchcfg">
       <div class="field"><span class="label">Match</span><div class="seg" id="cfgmode"><button type="button" data-v="ffa">Free for all</button><button type="button" data-v="team">Teams</button></div></div>
@@ -201,16 +271,29 @@ input[type=range]{accent-color:var(--amber);width:200px}
       </div>
       <div id="webmsg">The host gets a short code to share. Up to 4 players join with that same code.</div>
     </div>
+    <div class="joinbox" id="lobby" hidden>
+      <span class="label">Lobby · match <span id="lobbycode"></span></span>
+      <div id="lobbylist"></div>
+      <div id="lobbylog"></div>
+      <div class="row">
+        <input type="text" id="lobbyinput" maxlength="140" autocomplete="off" spellcheck="false" placeholder="Message the other players">
+        <button class="btn2" id="lobbysend" type="button">Send</button>
+      </div>
+    </div>
     <p class="note" id="hostnote">Ammo crates in the warehouse and on the catwalk refill your magazines. Health recovers after five seconds out of fire.</p>
     <div class="keys">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Mouse</kbd><span>Aim · left click fires · right click aims down sights</span>
-      <kbd>Shift</kbd><span>Sprint</span>
-      <kbd>C</kbd><span>Crouch (toggle)</span>
-      <kbd>Space</kbd><span>Jump</span>
+      <kbd>Shift</kbd><span>Sprint · steadies the sniper scope</span>
+      <kbd>C</kbd><span>Crouch · while sprinting, slide</span>
+      <kbd>Space</kbd><span>Jump · near a low wall or crate, vault over it</span>
       <kbd>R</kbd><span>Reload</span>
-      <kbd>1 2 3</kbd><span>Carbine · marksman rifle · sidearm (Q swaps back)</span>
+      <kbd>1 2 3 4</kbd><span>Machine gun · sniper · shotgun · sidearm (Q swaps back) · 5 is the supply-drop launcher</span>
+      <kbd>F</kbd><span>Infrared sensor, a few seconds at a time</span>
+      <kbd>G</kbd><span>Throw a frag grenade</span>
+      <kbd>X</kbd><span>Throw a flashbang</span>
       <kbd>E</kbd><span>Grab the helicopter rope · E again lets go</span>
+      <kbd>Enter</kbd><span>Text chat with the other players</span>
       <kbd>Tab</kbd><span>Scoreboard</span>
       <kbd>Esc</kbd><span>Release the mouse and open this menu</span>
     </div>
