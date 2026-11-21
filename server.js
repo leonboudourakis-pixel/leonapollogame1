@@ -97,7 +97,7 @@ function onConnect(c, local) {
   let me = null;
   c.onmsg = m => {
     if (m.t === 'hello' && !me) {
-      me = match.join(m.name, o => c.send(o), local, m.cfg);
+      me = match.join(m.name, o => c.send(o), local, m.cfg, m);
       if (!me) { c.send({ t: 'full' }); c.close(); }
       return;
     }

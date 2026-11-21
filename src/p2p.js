@@ -23,7 +23,7 @@ function createRoom() {
     c.onmsg = m => {
       if (!m || typeof m !== 'object') return;
       if (m.t === 'hello' && !me) {
-        me = match.join(m.name, o => c.send(o), !!isHost, m.cfg);
+        me = match.join(m.name, o => c.send(o), !!isHost, m.cfg, m);
         if (!me) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); }
         return;
       }

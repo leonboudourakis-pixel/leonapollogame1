@@ -46,9 +46,11 @@ IF SOMETHING GOES WRONG
 
 CONTROLS
   WASD move · Mouse aim · Left click fire · Right click aim down sights
-  Shift sprint · C crouch · Space jump · R reload · E grab/let go of the rope
-  1 carbine · 2 marksman rifle (scope) · 3 sidearm · Q last weapon
-  Tab scoreboard · Esc menu
+  Shift sprint · C crouch (slide while sprinting) · Space jump, or vault a low wall
+  R reload · E grab/let go of the rope
+  1 machine gun · 2 sniper rifle · 3 shotgun · 4 sidearm · 5 supply-drop launcher · Q last weapon
+  F infrared sensor (short bursts) · G frag grenade · X flashbang
+  Enter or T text chat · Tab scoreboard · Esc menu
 
 EXTRAS
   Change the kill target:  KILLS=15 node server.js     Change the port:  PORT=9000 node server.js
