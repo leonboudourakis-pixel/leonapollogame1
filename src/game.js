@@ -198,11 +198,16 @@ T.concrete = ctex(512, (g, S) => {
   grain(g, S, 26);
 });
 function corrDraw(g, S, color) {
-  for (let x = 0; x < S; x++) { const v = Math.sin(x / S * Math.PI * 2 * 16); const s = color ? 150 + 70 * v : 128 + 120 * v; g.fillStyle = `rgb(${s},${s},${s})`; g.fillRect(x, 0, 1, S); }
+  for (let x = 0; x < S; x++) { const v = Math.sin(x / S * Math.PI * 2 * 16); const s = color ? 152 + 34 * v : 128 + 120 * v; /* gentle stripes in the paint; the normal map does the ridges */ g.fillStyle = `rgb(${s},${s},${s})`; g.fillRect(x, 0, 1, S); }
   if (color) { blot(g, S, 50, 'rgba(90,50,25,.35)', 8, 50); blot(g, S, 30, 'rgba(30,30,30,.3)', 20, 90); grain(g, S, 20); }
 }
 T.corr = ctex(512, (g, S) => corrDraw(g, S, true));
-T.corrBump = ctex(256, (g, S) => corrDraw(g, S, false), { srgb: false });
+// The ridges are a normal map, not a bump map: a bump map is shaded from screen-space height differences, which
+// turn into sparkling noise once the ridges get close to a pixel wide. A normal map just fades to flat with distance.
+T.corrN = ctex(512, (g, S) => {
+  for (let x = 0; x < S; x++) { const sl = -0.62 * Math.cos(x / S * Math.PI * 2 * 16), L = Math.hypot(sl, 1); g.fillStyle = `rgb(${Math.round(127.5 + 127.5 * sl / L)},128,${Math.round(127.5 + 127.5 / L)})`; g.fillRect(x, 0, 1, S); }
+}, { srgb: false });
+const CORR_NS = new THREE.Vector2(0.9, 0.9);
 T.wood = ctex(256, (g, S) => {
   g.fillStyle = '#7d5f3c'; g.fillRect(0, 0, S, S);
   for (let i = 0; i < 6; i++) { g.fillStyle = `rgba(${90 + sr() * 40},${65 + sr() * 25},${35 + sr() * 15},1)`; g.fillRect(0, i * S / 6, S, S / 6 - 3); }
@@ -272,8 +277,8 @@ const M = {
   asphalt: std({ map: T.asphalt, roughnessMap: T.wet, roughness: 1, metalness: 0 }),
   concrete: std({ map: T.concrete, roughness: 0.93, metalness: 0 }),
   concreteDark: std({ map: T.concrete, color: 0x8a8580, roughness: 0.95 }),
-  wallMetal: std({ map: T.corr, bumpMap: T.corrBump, bumpScale: 2, color: 0x8f9a9e, roughness: 0.5, metalness: 0.55 }),
-  roof: std({ map: T.corr, bumpMap: T.corrBump, bumpScale: 2, color: 0x6c6460, roughness: 0.6, metalness: 0.5 }),
+  wallMetal: std({ map: T.corr, normalMap: T.corrN, normalScale: CORR_NS, color: 0x8f9a9e, roughness: 0.6, metalness: 0.4 }),
+  roof: std({ map: T.corr, normalMap: T.corrN, normalScale: CORR_NS, color: 0x6c6460, roughness: 0.66, metalness: 0.38 }),
   steel: std({ color: 0x3b3e42, roughness: 0.42, metalness: 0.85 }),
   steelLight: std({ color: 0x8b9095, roughness: 0.46, metalness: 0.85 }),
   rail: std({ color: 0xb7b2a8, roughness: 0.55, metalness: 0.6 }),
@@ -325,7 +330,7 @@ float fbm2(vec2 p) { return vn(p) * 0.65 + vn(p * 2.7 + 5.1) * 0.35; }
 }
 antiTile(M.asphalt, [0.78, 0.74, 0.7], 0.7); antiTile(M.dirt, [0.85, 0.92, 0.62], 0.9);
 const CONTAINER_COLORS = [0x8e3b2a, 0x22406a, 0x3f5f3a, 0xb0602a, 0x6a6e70, 0x7a2f3c, 0x2f5c63];
-const containerMats = CONTAINER_COLORS.map(c => std({ map: T.corr, bumpMap: T.corrBump, bumpScale: 2.5, color: c, roughness: 0.62, metalness: 0.45 }));
+const containerMats = CONTAINER_COLORS.map(c => std({ map: T.corr, normalMap: T.corrN, normalScale: CORR_NS, color: c, roughness: 0.66, metalness: 0.36 }));
 const barrelMats = [0x2d4f7c, 0x8b2c22, 0x3d4a2b, 0x9a6a20].map(c => std({ color: c, roughness: 0.5, metalness: 0.5 }));
 
 // ======================================================= WORLD BUILDING
@@ -928,7 +933,7 @@ function leafTex(kind) {
 }
 function treeMats() {
   if (TREE) return TREE;
-  const leaf = kind => new THREE.MeshStandardMaterial({ map: leafTex(kind), alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.88, metalness: 0 });
+  const leaf = kind => new THREE.MeshStandardMaterial({ map: leafTex(kind), alphaTest: 0.42, alphaToCoverage: true, side: THREE.DoubleSide, roughness: 0.88, metalness: 0 }); // coverage softens the leaf edges so they do not crawl
   TREE = { olive: leaf('olive'), cypress: leaf('cypress'), bark: M.bark, olives: [], cypresses: [] };
   for (let v = 0; v < 3; v++) { TREE.olives.push(makeTreeGeo('olive', v)); TREE.cypresses.push(makeTreeGeo('cypress', v)); }
   return TREE;
@@ -1818,7 +1823,7 @@ function fire() {
       let owner = h.object.userData.owner;
       if (!owner) { let p = h.object; while (p && !p.userData.owner) p = p.parent; owner = p && p.userData.owner; }
       if (owner && owner.kind === 'target') { if (pi < 3) bloodPuff(h.point, d.clone().negate()); hitTarget(owner, head); headAny = headAny || head; }
-      else if (owner && !isFriend(owner.id)) { if (pi < 3) bloodPuff(h.point, d.clone().negate()); const c = dmgBy.get(owner) || { dmg: 0, head: false }; c.dmg += w.dmg * partK(w, part) * fall * R(0.95, 1.05); c.head = c.head || head; dmgBy.set(owner, c); headAny = headAny || head; }
+      else if (owner && !isFriend(owner.id)) { if (pi < 3) bloodPuff(h.point, d.clone().negate()); const c = dmgBy.get(owner) || { dmg: 0, head: false }; c.dmg += w.scope ? sniperDmg(part, h.distance) : w.dmg * partK(w, part) * fall * R(0.95, 1.05); c.head = c.head || head; dmgBy.set(owner, c); headAny = headAny || head; }
       else if (owner && owner.kind === 'vehicle') { owner.onHit(); }
     } else if (hw) { e = o.clone().addScaledVector(d, hw.t); if (impacts++ < 5) impact(e, hw.n, hw.water); }
     else e = o.clone().addScaledVector(d, w.range);
@@ -2468,6 +2473,13 @@ let hitT = 0;
 function showHit(kind) { const h = $('hit'); h.classList.toggle('kill', kind === 'kill' || kind === 'head'); h.style.opacity = 1; hitT = kind === 'kill' ? 0.35 : 0.15; SFX.hitmarker(kind === 'head'); }
 let dmgFlash = 0;
 // where you are hit matters: head is deadly, arms and legs soak up less
+// Sniper rifle: a headshot always kills. A body shot hits hard and harder with range: 120 up close, rising to a
+// killing 200 from 140 m out. Arms and legs take less.
+function sniperDmg(part, dist) {
+  if (part === 'head') return 260;
+  const far = clamp((dist - 15) / 125, 0, 1);
+  return (120 + 80 * far) * (part === 'leg' ? 0.7 : part === 'arm' ? 0.65 : 1);
+}
 function partK(w, part) { return part === 'head' ? w.head : part === 'leg' ? 0.7 : part === 'arm' ? 0.65 : 1; }
 // host is Leon, whoever joins is Apollo (unless they typed some other callsign)
 function roleName(host) {
@@ -2477,7 +2489,8 @@ function roleName(host) {
 }
 const HITS = { p: new Spring(170, 0.32), y: new Spring(170, 0.32), r: new Spring(120, 0.3) };
 function hurt(fromPos, dmg) {
-  const k = clamp(dmg / 30, 0.35, 2.2);
+  const heavy = dmg >= 100; // a sniper round: a much bigger jolt and a longer stagger
+  const k = clamp(dmg / 30, 0.35, heavy ? 3.3 : 2.2);
   dmgFlash = Math.min(1, dmgFlash + dmg / 45); SFX.hurt(); SFX.thud(k);
   // the view snaps away from the hit, the gun jerks, you stagger for a moment
   let side = Math.random() < 0.5 ? -1 : 1;
@@ -2485,7 +2498,7 @@ function hurt(fromPos, dmg) {
   HITS.p.v += R(0.9, 1.5) * k; HITS.y.v -= side * R(0.8, 1.4) * k; HITS.r.v += side * R(0.8, 1.4) * k;
   P.pitch += R(0.006, 0.014) * k; P.yaw += side * R(0.004, 0.01) * k; // aim punch
   VMS.rx.v -= 6 * k; VMS.z.v += 2.5 * k; VMS.x.v += side * 1.5 * k;
-  P.flinch = Math.min(0.6, P.flinch + 0.25 * k);
+  P.flinch = Math.min(heavy ? 1 : 0.6, P.flinch + (heavy ? 0.34 : 0.25) * k);
   if (fromPos) {
     const d = fromPos.clone().sub(P.pos); const ang = Math.atan2(-d.x, -d.z) - P.yaw;
     const i = document.createElement('i'); i.style.transform = `rotate(${-ang}rad)`; $('dmg').append(i); setTimeout(() => i.remove(), 1250);
@@ -2949,7 +2962,7 @@ function updateDay(dt) {
   M.lamp.emissiveIntensity = lerp(0.6, 5.5, smoothK((k - 0.4) / 0.4));
   wSun.color.copy(sun.color);
   fitShadows(window.__scopeTest ? scopeView() : shadowView);
-  if (Math.abs(k - DAY.env) > 0.085) { DAY.env = k; bakeEnv(); }
+  if (Math.abs(k - DAY.env) > 0.03) { DAY.env = k; bakeEnv(); } // small steps, so reflections never visibly jump
 }
 
 // ======================================================= SURFACES + AMBIENCE
@@ -4739,7 +4752,7 @@ const GradeShader = {
       c = mix(c, v, ir);
     }
     c *= 1.0 - smoothstep(0.45, 1.15, r)*(0.6 + 0.25*ir);
-    c += (hash(uv*vec2(1733.,977.)+fract(time*7.3))-.5)*0.022;
+    c += (hash(uv*vec2(1733.,977.)+fract(time*7.3))-.5)*0.011;
     float e = dmg*smoothstep(0.15,0.85,r); c = mix(c, vec3(0.45,0.02,0.02)+c*0.3, e*0.8);
     gl_FragColor = vec4(c,1.); }`
 };
@@ -4867,14 +4880,18 @@ function trackPerf(raw) { // measure real fps once a second; in Auto, trade reso
   const fps = perf.n / perf.t; perf.fps = Math.round(fps); perf.n = 0; perf.t = 0;
   if (!QUALITY[settings.quality].adaptive || gameState !== 'play' || (WEAPONS[P.weapon].scope && P.ads > 0.5)) return;
   const now = performance.now();
-  if (fps < 52 && dynScale > 0.62 && now - perf.lastChange > 900) { dynScale = Math.max(0.62, dynScale * (fps < 36 ? 0.86 : 0.94)); perf.lastChange = now; applyPR(); }
-  else if (fps >= 58.5 && dynScale < 1 && now - perf.lastChange > 6000) { dynScale = Math.min(1, dynScale * 1.04); perf.lastChange = now; applyPR(); }
+  // Every change of resolution is a visible shimmer, so make them rare: if stepping up only made it drop again,
+  // wait twice as long before the next try (6 s, 12 s ... up to 4 minutes).
+  if (fps < 50 && dynScale > 0.62 && now - perf.lastChange > 1500) {
+    if (perf.wentUp && now - perf.wentUp < 9000) perf.upWait = Math.min(240000, (perf.upWait || 6000) * 2);
+    perf.wentUp = 0; dynScale = Math.max(0.62, dynScale * (fps < 36 ? 0.86 : 0.93)); perf.lastChange = now; applyPR();
+  } else if (fps >= 58.5 && dynScale < 1 && now - perf.lastChange > (perf.upWait || 6000)) { dynScale = Math.min(1, dynScale * 1.05); perf.lastChange = now; perf.wentUp = now; applyPR(); }
 }
 function frame() {
   const raw = clock.getDelta(); trackPerf(raw);
   const dt = Math.min(0.05, raw); elapsed += dt;
   skyUniforms.uTime.value = elapsed;
-  if (water) water.material.uniforms.time.value = elapsed * 0.35;
+  if (water) water.material.uniforms.time.value = elapsed * 0.27;
   updateDay(dt);
   if (gameState === 'play' || deployed) {
     if (gameState === 'play') updatePlayer(dt);
@@ -5025,4 +5042,4 @@ function showWebLobby() {
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); });
 }
 requestAnimationFrame(frame);
-window.__tb = { makeOperator, poseOperator, provoke, shotAtVehicles, missiles, shells, port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, exHeli, aboard, grabRope, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet, sun, scopeView, fitShadows, IR, toggleIR, throwNade, nades, giveLauncher, startDrop, get drop() { return drop; }, DAY, settings, prog, threat, get deployed() { return deployed; }, get inLobby() { return inLobby; }, chatSend, tryVault, trySlide, surfaceAt, ROPE_HELIS };
+window.__tb = { rayWorld, makeOperator, poseOperator, provoke, shotAtVehicles, missiles, shells, port, isLand, get swim() { return P.swim; }, composer, viewmodels, bots, get ropeHeli() { return ropeHeli; }, exHeli, aboard, grabRope, startRopeHeli, get localMatch() { return localMatch; }, get cfg() { return cfg; }, get netMode() { return netMode; }, perf, get dynScale() { return dynScale; }, get pr() { return curPR; }, spawnFlyby, flybys, boats, P, remotes, playerInfo, colliders, renderer, scene, camera, keys, get online() { return online; }, fire: () => fire(), setWeapon, onNet, sun, scopeView, fitShadows, IR, toggleIR, throwNade, nades, giveLauncher, startDrop, get drop() { return drop; }, DAY, settings, prog, threat, get deployed() { return deployed; }, get inLobby() { return inLobby; }, chatSend, tryVault, trySlide, surfaceAt, ROPE_HELIS };
